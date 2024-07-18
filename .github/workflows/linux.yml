@@ -1,0 +1,32 @@
+name: linux
+
+on:
+  push:
+    branches: [ "workflow" ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up OpenCL
+      run: |
+        sudo apt-get -y install ocl-icd-opencl-dev
+        sudo apt-get -y install opencl-headers
+
+    - name: Build
+      run: cargo build --release
+
+    - name: Create release
+      uses: ncipollo/release-action@v1
+      with:
+        allowUpdates: true
+        tag: dev-linux
+        artifacts: "target/release/bacon"
+        prerelease: true
