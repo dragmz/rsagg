@@ -2,7 +2,7 @@ name: linux
 
 on:
   push:
-    branches: [ "workflow" ]
+    branches: [ "master" ]
 
 env:
   CARGO_TERM_COLOR: always
