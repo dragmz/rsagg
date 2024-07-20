@@ -22,12 +22,12 @@ jobs:
       run: .\vcpkg\vcpkg.exe install opencl
 
     - name: Build
-      run: $env:LIB += ';' + (Resolve-Path .\vcpkg\installed\x64-windows\lib); cargo build --release; cp .\target\release\bacon.exe .
+      run: $env:LIB += ';' + (Resolve-Path .\vcpkg\installed\x64-windows\lib); cargo build --release
 
     - name: Create release
       uses: ncipollo/release-action@v1
       with:
         allowUpdates: true
         tag: dev-windows
-        artifacts: "bacon.exe"
+        artifacts: "target/release/bacon.exe"
         prerelease: true
