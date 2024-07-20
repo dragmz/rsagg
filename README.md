@@ -2,6 +2,10 @@
 
 RuSt Algorand GPU vanity address Generator
 
+<p align="center">
+  <img width="300" height="300" src="logo.jpeg">
+</p>
+
 ## Usage
 
 ### Optimize batch size
