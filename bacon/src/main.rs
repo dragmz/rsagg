@@ -41,6 +41,10 @@ struct OptimizeCommand {
     cpu: bool,
     #[arg(long, default_value_t = false)]
     all: bool,
+    #[arg(long, default_value_t = 0)]
+    preheat_time: usize,
+    #[arg(long, default_value_t = 0)]
+    batch_time: usize,
 }
 
 #[derive(Parser)]
@@ -160,13 +164,16 @@ fn generate(args: GenerateCommand) {
         let start = std::time::Instant::now();
         let mut total = 0;
 
+        let mut last_benchmark_report = std::time::Instant::now();
+
         loop {
             let batch_start = std::time::Instant::now();
 
             let (processed, stop) = runner.step();
             total += processed;
 
-            if args.benchmark && !stop && total > 0 {
+            if args.benchmark && !stop && total > 0 && last_benchmark_report.elapsed() >= std::time::Duration::from_secs(1) {
+                last_benchmark_report = std::time::Instant::now();
                 let now = std::time::Instant::now();
                 let total_elapsed: std::time::Duration = now.duration_since(start);
                 let batch_elapsed: std::time::Duration = now.duration_since(batch_start);
@@ -253,6 +260,7 @@ fn optimize(args: OptimizeCommand) {
 
             let mut total = 0;
 
+            let preheat_start = std::time::Instant::now();
             {
                 let mut preheat_processed = 0;
 
@@ -261,7 +269,10 @@ fn optimize(args: OptimizeCommand) {
 
                     preheat_processed += processed;
                     if preheat_processed > runner.batch_size() * 2 {
-                        break;
+                        let preheat_time = preheat_start.elapsed();
+                        if preheat_time.as_millis() >= args.preheat_time as u128{
+                            break;
+                        }
                     }
                 }
             }
@@ -279,7 +290,10 @@ fn optimize(args: OptimizeCommand) {
 
                 let performance = total as f64 / elapsed.as_secs_f64();
 
-                if performance as usize > 0 && total as f64 >= performance {
+                if performance as usize > 0
+                    && total as f64 >= performance
+                    && (args.batch_time == 0 || elapsed.as_millis() >= args.batch_time as u128)
+                {
                     if performance > best_performance {
                         best_batch_size = current_batch_size;
                         best_performance = performance;
@@ -350,6 +364,8 @@ mod tests {
             worker_concurrency: 0,
             cpu: false,
             all: false,
+            preheat_time: 0,
+            batch_time: 0,
         });
     }
     #[test]
