@@ -7,8 +7,10 @@ use agvg::bacon::{
 use algonaut_crypto;
 use csv;
 use std::io::BufRead;
+use std::str::FromStr;
 
 use clap::Parser;
+use sha2::{Digest, Sha512_256};
 
 #[derive(Parser)]
 enum Cli {
@@ -45,6 +47,8 @@ struct OptimizeCommand {
     preheat_time: usize,
     #[arg(long, default_value_t = 0)]
     batch_time: usize,
+    #[arg(long, default_value_t = String::from(""))]
+    msig: String,
 }
 
 #[derive(Parser)]
@@ -75,6 +79,9 @@ struct GenerateCommand {
 
     #[arg(long, default_value_t = String::from(""))]
     output: String,
+
+    #[arg(long, default_value_t = String::from(""))]
+    msig: String,
 }
 
 fn read_prefixes_from_file(file: &str, prefixes: &mut Vec<String>) {
@@ -101,24 +108,53 @@ struct PrintCallback {
     writer: Option<csv::Writer<std::fs::File>>,
     found: usize,
     count: usize,
+    msig: Option<[u8; 32]>,
 }
 
 impl Callback for PrintCallback {
     fn found(&mut self, key: &[u8]) -> bool {
         self.found += 1;
 
-        let m = algonaut_crypto::mnemonic::from_key(key).unwrap();
-        let acc = algonaut::transaction::account::Account::from_mnemonic(&m).unwrap();
+        if self.msig.is_some() {
+            let preamble = [b"MultisigAddr\x01\x01", self.msig.unwrap().as_slice()].concat();
+            let full_key = [preamble.as_slice(), key].concat();
 
-        if self.print {
-            println!("{},{}", acc.address(), m);
-        }
+            let digest = Sha512_256::digest(&full_key);
 
-        if let Some(ref mut writer) = self.writer {
-            writer
-                .write_record(&[acc.address().to_string(), m])
-                .unwrap();
-            writer.flush().unwrap();
+            let mut target_bytes = [0; 32];
+            target_bytes.copy_from_slice(&digest);
+
+            let mut dummy_bytes = [0; 32];
+            dummy_bytes.copy_from_slice(&key);
+
+            let base_addr = algonaut::core::Address::new(self.msig.unwrap());
+            let dummy_addr = algonaut::core::Address::new(dummy_bytes);
+            let target_addr = algonaut::core::Address::new(target_bytes);
+
+            if self.print {
+                println!("{},{},{}", target_addr, base_addr, dummy_addr);
+            }
+
+            if let Some(ref mut writer) = self.writer {
+                writer
+                    .write_record(&[target_addr.to_string(), base_addr.to_string(), dummy_addr.to_string()])
+                    .unwrap();
+                writer.flush().unwrap();
+            }
+        } else {
+            let m = algonaut_crypto::mnemonic::from_key(key).unwrap();
+            let acc = algonaut::transaction::account::Account::from_mnemonic(&m).unwrap();
+
+            if self.print {
+                println!("{},{}", acc.address(), m);
+            }
+
+            if let Some(ref mut writer) = self.writer {
+                writer
+                    .write_record(&[acc.address().to_string(), m])
+                    .unwrap();
+                writer.flush().unwrap();
+            }
         }
 
         self.found < self.count
@@ -134,7 +170,17 @@ fn main() {
 }
 
 fn generate(args: GenerateCommand) {
-    let ctx = Context::new(args.cpu);
+    let msig = if !args.msig.is_empty() {
+        Some(
+            algonaut::core::Address::from_str(args.msig.as_str())
+                .unwrap()
+                .0,
+        )
+    } else {
+        None
+    };
+
+    let ctx = Context::new(args.cpu, msig);
 
     let mut prefixes = vec![args.prefixes];
     read_prefixes_from_file(&args.file, &mut prefixes);
@@ -150,6 +196,7 @@ fn generate(args: GenerateCommand) {
         },
         found: 0,
         count: args.count,
+        msig,
     });
 
     let init = ctx.prepare(&prefixes);
@@ -172,7 +219,11 @@ fn generate(args: GenerateCommand) {
             let (processed, stop) = runner.step();
             total += processed;
 
-            if args.benchmark && !stop && total > 0 && last_benchmark_report.elapsed() >= std::time::Duration::from_secs(1) {
+            if args.benchmark
+                && !stop
+                && total > 0
+                && last_benchmark_report.elapsed() >= std::time::Duration::from_secs(1)
+            {
                 last_benchmark_report = std::time::Instant::now();
                 let now = std::time::Instant::now();
                 let total_elapsed: std::time::Duration = now.duration_since(start);
@@ -199,7 +250,17 @@ fn generate(args: GenerateCommand) {
 }
 
 fn optimize(args: OptimizeCommand) {
-    let ctx = Context::new(args.cpu);
+    let msig = if !args.msig.is_empty() {
+        Some(
+            algonaut::core::Address::from_str(args.msig.as_str())
+                .unwrap()
+                .0,
+        )
+    } else {
+        None
+    };
+
+    let ctx = Context::new(args.cpu, msig);
 
     let mut prefixes = vec![args.prefixes];
     read_prefixes_from_file(&args.file, &mut prefixes);
@@ -270,7 +331,7 @@ fn optimize(args: OptimizeCommand) {
                     preheat_processed += processed;
                     if preheat_processed > runner.batch_size() * 2 {
                         let preheat_time = preheat_start.elapsed();
-                        if preheat_time.as_millis() >= args.preheat_time as u128{
+                        if preheat_time.as_millis() >= args.preheat_time as u128 {
                             break;
                         }
                     }
@@ -349,7 +410,7 @@ mod tests {
     #[test]
     fn test_optimize() {
         let multiple = {
-            let ctx = Context::new(false);
+            let ctx = Context::new(false, None);
             ctx.preferred_multiple()
         };
 
@@ -366,11 +427,12 @@ mod tests {
             all: false,
             preheat_time: 0,
             batch_time: 0,
+            msig: String::from(""),
         });
     }
     #[test]
     fn test_generate() {
-        let ctx = Context::new(false);
+        let ctx = Context::new(false, None);
         let init = ctx.prepare(&vec!["A".to_string()]);
 
         unsafe {

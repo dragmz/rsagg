@@ -3129,14 +3129,30 @@ void kernel ed25519_create_keypair(
     global const unsigned char *prefix,
     global unsigned char *counts
 #endif
+#ifdef MSIG
+    ,global const unsigned char *base
+#endif
 )
 {
+#ifdef MSIG
+  unsigned char az[14+32+32];
+#else
   unsigned char az[64];
+#endif
+
   unsigned char pub[32];
 
-  ge_p3 A;
-
   const int i = get_global_id(0);
+
+#ifdef MSIG
+  memcpy(az, msig_header, 14);
+  memcpy(az + 14, base, 32);
+  memcpy(az + 14 + 32, seed + i * 32, 32);
+
+  crypto_hash_sha512256(az, pub, 14+32+32);
+
+#else
+  ge_p3 A;
 
   crypto_hash_sha512(&seed[i * 32], az, 32);
   az[0] &= 248;
@@ -3145,6 +3161,7 @@ void kernel ed25519_create_keypair(
 
   ge_scalarmult_base(&A, az);
   ge_p3_tobytes(pub, &A);
+#endif
 
 #ifdef CPU
   base32_addr(pub, addr + i*54);

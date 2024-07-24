@@ -37,6 +37,7 @@ pub struct Context {
     context: opencl3::context::Context,
     program: opencl3::program::Program,
     cpu: bool,
+    msig: Option<[u8; 32]>,
 }
 
 impl Context {
@@ -91,11 +92,15 @@ pub fn prepare_prefixes(prefixes: &Vec<String>) -> Vec<String> {
 const BASE32_ALPHABET: &[u8; 32] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
 
 impl Context {
-    pub fn new(cpu: bool) -> Self {
+    pub fn new(cpu: bool, msig: Option<[u8; 32]>) -> Self {
         let args = {
             let mut args = Vec::from([CL_STD_3_0]);
             if cpu {
                 args.push("-D CPU");
+            }
+
+            if msig.is_some() {
+                args.push("-D MSIG");
             }
 
             args.join(" ")
@@ -115,6 +120,7 @@ impl Context {
             context,
             program,
             cpu,
+            msig,
         }
     }
 
@@ -162,6 +168,7 @@ impl Context {
             lengths,
             prefix_chunks,
             cpu: self.cpu,
+            msig: self.msig,
         }
     }
 }
@@ -174,6 +181,7 @@ pub struct Initializer<'a> {
     lengths: Vec<u8>,
     prefix_chunks: Vec<u8>,
     cpu: bool,
+    msig: Option<[u8; 32]>,
 }
 
 struct Worker {
@@ -204,6 +212,7 @@ pub struct Runner {
     _size_buffer: opencl3::memory::Buffer<u16>,
     _prefix_length_buffer: opencl3::memory::Buffer<u8>,
     _prefix_chunks_buffer: opencl3::memory::Buffer<u8>,
+    _msig_buffer: Buffer<u8>,
     seed_threads: Vec<std::thread::JoinHandle<()>>,
     status_rx: Option<std::sync::mpsc::Receiver<WorkerStatus>>,
     workers: Vec<Worker>,
@@ -416,6 +425,14 @@ impl<'a> Initializer<'a> {
         )
         .unwrap();
 
+        let mut msig_buffer: Buffer<u8> = Buffer::create(
+            &self.context,
+            CL_MEM_READ_ONLY | CL_MEM_HOST_WRITE_ONLY,
+            32,
+            ptr::null_mut(),
+        )
+        .unwrap();
+
         {
             let queue =
                 CommandQueue::create_with_properties(self.context, self.device.id(), 0, 0).unwrap();
@@ -450,6 +467,18 @@ impl<'a> Initializer<'a> {
                     &[],
                 )
                 .unwrap();
+
+            if self.msig.is_some() {
+                queue
+                    .enqueue_write_buffer(
+                        &mut msig_buffer,
+                        CL_TRUE,
+                        0,
+                        self.msig.unwrap().as_slice(),
+                        &[],
+                    )
+                    .unwrap();
+            }
         }
 
         let mut workers = Vec::new();
@@ -496,12 +525,18 @@ impl<'a> Initializer<'a> {
                 kernel.set_arg(1, &prefix_length_buffer).unwrap();
                 kernel.set_arg(2, &prefix_chunks_buffer).unwrap();
                 kernel.set_arg(3, &addrs_buffer).unwrap();
+                if self.msig.is_some() {
+                    kernel.set_arg(4, &msig_buffer).unwrap();
+                }
             } else {
                 kernel.set_arg(0, &seed_buffer).unwrap();
                 kernel.set_arg(1, &size_buffer).unwrap();
                 kernel.set_arg(2, &prefix_length_buffer).unwrap();
                 kernel.set_arg(3, &prefix_chunks_buffer).unwrap();
                 kernel.set_arg(4, &counts_buffer).unwrap();
+                if self.msig.is_some() {
+                    kernel.set_arg(5, &msig_buffer).unwrap();
+                }
             }
 
             let cb = cb.clone();
@@ -625,6 +660,7 @@ impl<'a> Initializer<'a> {
             _size_buffer: size_buffer,
             _prefix_length_buffer: prefix_length_buffer,
             _prefix_chunks_buffer: prefix_chunks_buffer,
+            _msig_buffer: msig_buffer,
 
             status_rx: Some(status_rx),
             seed_threads,
