@@ -46,14 +46,18 @@ impl Context {
     }
 }
 
-fn default_device() -> opencl3::device::Device {
+fn default_device(index: usize) -> opencl3::device::Device {
     let platforms = opencl3::platform::get_platforms().unwrap();
     let platform = platforms[0];
     let devices = platform
         .get_devices(opencl3::device::CL_DEVICE_TYPE_GPU)
         .unwrap();
 
-    opencl3::device::Device::new(devices[0])
+    if index >= devices.len() {
+        panic!("Invalid device index: {}, devices: {}", index, devices.len());
+    }
+
+    opencl3::device::Device::new(devices[index])
 }
 
 pub fn preferred_multiple(device: &Device, kernel: &Kernel) -> usize {
@@ -92,7 +96,7 @@ pub fn prepare_prefixes(prefixes: &Vec<String>) -> Vec<String> {
 const BASE32_ALPHABET: &[u8; 32] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
 
 impl Context {
-    pub fn new(cpu: bool, msig: Option<[u8; 32]>) -> Self {
+    pub fn new(cpu: bool, msig: Option<[u8; 32]>, device: usize) -> Self {
         let args = {
             let mut args = Vec::from([CL_STD_3_0]);
             if cpu {
@@ -106,7 +110,7 @@ impl Context {
             args.join(" ")
         };
 
-        let device = default_device();
+        let device = default_device(device);
         let context = opencl3::context::Context::from_device(&device).unwrap();
         let program = opencl3::program::Program::create_and_build_from_source(
             &context,

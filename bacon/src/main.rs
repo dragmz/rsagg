@@ -49,6 +49,8 @@ struct OptimizeCommand {
     batch_time: usize,
     #[arg(long, default_value_t = String::from(""))]
     msig: String,
+    #[arg(long, default_value_t = 0)]
+    device: usize,
 }
 
 #[derive(Parser)]
@@ -82,6 +84,9 @@ struct GenerateCommand {
 
     #[arg(long, default_value_t = String::from(""))]
     msig: String,
+
+    #[arg(long, default_value_t = 0)]
+    device: usize,
 }
 
 fn read_prefixes_from_file(file: &str, prefixes: &mut Vec<String>) {
@@ -180,7 +185,7 @@ fn generate(args: GenerateCommand) {
         None
     };
 
-    let ctx = Context::new(args.cpu, msig);
+    let ctx = Context::new(args.cpu, msig, args.device);
 
     let mut prefixes = vec![args.prefixes];
     read_prefixes_from_file(&args.file, &mut prefixes);
@@ -260,7 +265,7 @@ fn optimize(args: OptimizeCommand) {
         None
     };
 
-    let ctx = Context::new(args.cpu, msig);
+    let ctx = Context::new(args.cpu, msig, args.device);
 
     let mut prefixes = vec![args.prefixes];
     read_prefixes_from_file(&args.file, &mut prefixes);
@@ -410,7 +415,7 @@ mod tests {
     #[test]
     fn test_optimize() {
         let multiple = {
-            let ctx = Context::new(false, None);
+            let ctx = Context::new(false, None, 0);
             ctx.preferred_multiple()
         };
 
@@ -428,11 +433,12 @@ mod tests {
             preheat_time: 0,
             batch_time: 0,
             msig: String::from(""),
+            device: 0,
         });
     }
     #[test]
     fn test_generate() {
-        let ctx = Context::new(false, None);
+        let ctx = Context::new(false, None, 0);
         let init = ctx.prepare(&vec!["A".to_string()]);
 
         unsafe {
