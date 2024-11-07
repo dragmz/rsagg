@@ -100,14 +100,6 @@ fn read_prefixes_from_file(file: &str, prefixes: &mut Vec<String>) {
     }
 }
 
-struct DummyCallback {}
-
-impl Callback for DummyCallback {
-    fn found(&mut self, _: &[u8]) -> bool {
-        true
-    }
-}
-
 struct PrintCallback {
     print: bool,
     writer: Option<csv::Writer<std::fs::File>>,

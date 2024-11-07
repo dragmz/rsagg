@@ -199,10 +199,6 @@ struct Worker {
     cpu: bool,
 }
 
-trait RunnerTrait {
-    unsafe fn step(&mut self) -> (usize, bool);
-}
-
 struct WorkerStatus {
     id: usize,
     last_batch: usize,
