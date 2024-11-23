@@ -51,6 +51,8 @@ struct OptimizeCommand {
     msig: String,
     #[arg(long, default_value_t = 0)]
     device: usize,
+    #[arg(long, default_value_t = String::from(""))]
+    config: String,
 }
 
 #[derive(Parser)]
@@ -87,6 +89,9 @@ struct GenerateCommand {
 
     #[arg(long, default_value_t = 0)]
     device: usize,
+
+    #[arg(long, default_value_t = String::from(""))]
+    config: String,
 }
 
 fn read_prefixes_from_file(file: &str, prefixes: &mut Vec<String>) {
@@ -134,7 +139,11 @@ impl Callback for PrintCallback {
 
             if let Some(ref mut writer) = self.writer {
                 writer
-                    .write_record(&[target_addr.to_string(), base_addr.to_string(), dummy_addr.to_string()])
+                    .write_record(&[
+                        target_addr.to_string(),
+                        base_addr.to_string(),
+                        dummy_addr.to_string(),
+                    ])
                     .unwrap();
                 writer.flush().unwrap();
             }
@@ -159,14 +168,49 @@ impl Callback for PrintCallback {
 }
 
 fn main() {
-    let args = Cli::parse();
-    match args {
-        Cli::Generate(args) => generate(args),
-        Cli::Optimize(args) => optimize(args),
+    match Cli::try_parse() {
+        Ok(args) => match args {
+            Cli::Generate(args) => generate(args),
+            Cli::Optimize(args) => optimize(args),
+        },
+        Err(_) => {
+            if config_exists("bacon.json") {
+                generate(GenerateCommand::parse());
+            } else {
+                optimize(OptimizeCommand::parse());
+            }
+        }
+    };
+}
+
+#[derive(serde::Deserialize, serde::Serialize)]
+struct Config {
+    batch: usize,
+}
+
+fn config_exists(config: &str) -> bool {
+    std::fs::metadata(config).is_ok()
+}
+
+// load config from string path, deserialize into struct of { batch: usize }
+fn load_config(config: &str) -> Option<Config> {
+    if config == "" {
+        return None;
     }
+
+    let file = match std::fs::File::open(config) {
+        Ok(file) => file,
+        Err(_) => return None,
+    };
+
+    let reader = std::io::BufReader::new(file);
+
+    serde_json::from_reader(reader).unwrap()
 }
 
 fn generate(args: GenerateCommand) {
+    println!("Running generate");
+
     let msig = if !args.msig.is_empty() {
         Some(
             algonaut::core::Address::from_str(args.msig.as_str())
@@ -176,6 +220,29 @@ fn generate(args: GenerateCommand) {
     } else {
         None
     };
+
+    let mut batch = args.batch;
+
+    let config_path = match args.config.as_str() {
+        "" => "bacon.json".to_string(),
+        path => path.to_string(),
+    };
+
+    if config_path != "" {
+        match load_config(&config_path) {
+            Some(config) => {
+                if args.batch == 0 || !args.config.is_empty() {
+                    println!("Loaded config - {}, batch: {}", config_path, config.batch);
+                    batch = config.batch;
+                }
+            }
+            None => {
+                if args.batch == 0 {
+                    panic!("Config file not found: {}", config_path);
+                }
+            }
+        }
+    }
 
     let ctx = Context::new(args.cpu, msig, args.device);
 
@@ -199,7 +266,7 @@ fn generate(args: GenerateCommand) {
     let init = ctx.prepare(&prefixes);
     unsafe {
         let mut runner = init.prepare(
-            args.batch,
+            batch,
             args.seed_concurrency,
             args.worker_concurrency,
             Some(cb),
@@ -247,6 +314,8 @@ fn generate(args: GenerateCommand) {
 }
 
 fn optimize(args: OptimizeCommand) {
+    println!("Running optimize");
+
     let msig = if !args.msig.is_empty() {
         Some(
             algonaut::core::Address::from_str(args.msig.as_str())
@@ -295,6 +364,13 @@ fn optimize(args: OptimizeCommand) {
     };
 
     let init = ctx.prepare(&prefixes);
+
+    let config_path = match args.config.as_str() {
+        "" => "bacon.json".to_string(),
+        path => path.to_string(),
+    };
+
+    println!("Config path: {}", config_path);
 
     unsafe {
         loop {
@@ -360,6 +436,15 @@ fn optimize(args: OptimizeCommand) {
                             "Best batch size: {}, performance: {}",
                             best_batch_size, best_performance as usize
                         );
+
+                        if !config_path.is_empty() {
+                            let config = Config {
+                                batch: best_batch_size,
+                            };
+
+                            let config_str = serde_json::to_string(&config).unwrap();
+                            std::fs::write(config_path.clone(), config_str).unwrap();
+                        }
                     } else {
                         if args.all {
                             println!(
@@ -426,6 +511,7 @@ mod tests {
             batch_time: 0,
             msig: String::from(""),
             device: 0,
+            config: String::from(""),
         });
     }
     #[test]
