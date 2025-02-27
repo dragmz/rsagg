@@ -1,12 +1,12 @@
 use agvg;
 
 use agvg::bacon::{
-    align_to_preferred_multiple, max_batch_size, prepare_prefixes, Callback, Context,
+    Callback, Context, align_to_preferred_multiple, max_batch_size, prepare_prefixes,
 };
 
 use algonaut_crypto;
 use csv;
-use std::io::BufRead;
+use std::io::{BufRead, Read};
 use std::str::FromStr;
 
 use clap::Parser;
@@ -53,6 +53,8 @@ struct OptimizeCommand {
     device: usize,
     #[arg(long, default_value_t = String::from(""))]
     config: String,
+    #[arg(long, default_value_t = String::from(""))]
+    kernel: String,
 }
 
 #[derive(Parser)]
@@ -92,6 +94,9 @@ struct GenerateCommand {
 
     #[arg(long, default_value_t = String::from(""))]
     config: String,
+
+    #[arg(long, default_value_t = String::from(""))]
+    kernel: String,
 }
 
 fn read_prefixes_from_file(file: &str, prefixes: &mut Vec<String>) {
@@ -192,7 +197,26 @@ fn config_exists(config: &str) -> bool {
     std::fs::metadata(config).is_ok()
 }
 
-// load config from string path, deserialize into struct of { batch: usize }
+const DEFAULT_KERNEL: &str = include_str!("../../kernel.cl");
+
+fn load_kernel(kernel: &str) -> String {
+    if kernel == "" {
+        return DEFAULT_KERNEL.to_string();
+    }
+
+    let file = match std::fs::File::open(kernel) {
+        Ok(file) => file,
+        Err(_) => panic!("Kernel file not found: {}", kernel),
+    };
+
+    let mut reader = std::io::BufReader::new(file);
+
+    let mut kernel = String::new();
+    reader.read_to_string(&mut kernel).unwrap();
+
+    kernel
+}
+
 fn load_config(config: &str) -> Option<Config> {
     if config == "" {
         return None;
@@ -244,7 +268,8 @@ fn generate(args: GenerateCommand) {
         }
     }
 
-    let ctx = Context::new(args.cpu, msig, args.device);
+    let kernel = load_kernel(&args.kernel);
+    let ctx = Context::new(args.cpu, msig, args.device, kernel);
 
     let mut prefixes = vec![args.prefixes];
     read_prefixes_from_file(&args.file, &mut prefixes);
@@ -326,7 +351,8 @@ fn optimize(args: OptimizeCommand) {
         None
     };
 
-    let ctx = Context::new(args.cpu, msig, args.device);
+    let kernel = load_kernel(&args.kernel);
+    let ctx = Context::new(args.cpu, msig, args.device, kernel);
 
     let mut prefixes = vec![args.prefixes];
     read_prefixes_from_file(&args.file, &mut prefixes);
@@ -492,7 +518,7 @@ mod tests {
     #[test]
     fn test_optimize() {
         let multiple = {
-            let ctx = Context::new(false, None, 0);
+            let ctx = Context::new(false, None, 0, DEFAULT_KERNEL.to_string());
             ctx.preferred_multiple()
         };
 
@@ -512,11 +538,12 @@ mod tests {
             msig: String::from(""),
             device: 0,
             config: String::from(""),
+            kernel: String::from(""),
         });
     }
     #[test]
     fn test_generate() {
-        let ctx = Context::new(false, None, 0);
+        let ctx = Context::new(false, None, 0, DEFAULT_KERNEL.to_string());
         let init = ctx.prepare(&vec!["A".to_string()]);
 
         unsafe {

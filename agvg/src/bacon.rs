@@ -100,7 +100,7 @@ pub fn prepare_prefixes(prefixes: &Vec<String>) -> Vec<String> {
 const BASE32_ALPHABET: &[u8; 32] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
 
 impl Context {
-    pub fn new(cpu: bool, msig: Option<[u8; 32]>, device: usize) -> Self {
+    pub fn new(cpu: bool, msig: Option<[u8; 32]>, device: usize, kernel: String) -> Self {
         let args = {
             let mut args = Vec::from([CL_STD_3_0]);
             if cpu {
@@ -116,9 +116,10 @@ impl Context {
 
         let device = default_device(device);
         let context = opencl3::context::Context::from_device(&device).unwrap();
+
         let program = opencl3::program::Program::create_and_build_from_source(
             &context,
-            include_str!("../../kernel.cl"),
+            &kernel,
             args.as_str(),
         )
         .unwrap();
