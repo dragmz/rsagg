@@ -26,7 +26,7 @@ cargo run --release generate --batch BATCH_SIZE PREFIX
 
 ### vast.ai
 
-1. Go to the vast.ai template: https://cloud.vast.ai/?template_id=bf2098cba02c3c293192ab489c672e15
+1. Go to the vast.ai template: https://cloud.vast.ai/?template_id=85b0923f64acdb8521825c54e369fac3
 2. Select a machine of your choice and click "Rent"
 3. Connect to the machine
 4. Run ./bacon optimize / generate as described above
