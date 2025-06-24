@@ -55,6 +55,10 @@ struct OptimizeCommand {
     config: String,
     #[arg(long, default_value_t = String::from(""))]
     kernel: String,
+    #[arg(long, default_value_t = 0)]
+    iterations: usize,
+    #[arg(long, default_value_t = 0)]
+    time: usize,
 }
 
 #[derive(Parser)]
@@ -398,8 +402,27 @@ fn optimize(args: OptimizeCommand) {
 
     println!("Config path: {}", config_path);
 
+    let mut iteration = 0;
+    let start = std::time::Instant::now();
     unsafe {
         loop {
+            if args.iterations > 0 {
+                if iteration < args.iterations {
+                    iteration += 1;
+                } else {
+                    println!("Reached max iterations: {}", args.iterations);
+                    break;
+                }
+            }
+
+            if args.time > 0 {
+                let elapsed = start.elapsed();
+                if elapsed.as_millis() >= args.time as u128 {
+                    println!("Reached max time: {}ms", args.time);
+                    break;
+                }
+            }
+
             if !args.ordered {
                 let rnd = rand::random::<usize>();
                 let val = match to_batch_size - from_batch_size {
@@ -539,6 +562,8 @@ mod tests {
             device: 0,
             config: String::from(""),
             kernel: String::from(""),
+            iterations: 0,
+            time: 0,
         });
     }
     #[test]
