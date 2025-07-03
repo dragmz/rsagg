@@ -32,6 +32,224 @@ unsafe impl Send for Worker {}
 
 const KEY_SIZE: usize = 32;
 
+pub struct Generator<'a> {
+    init: Initializer<'a>,
+}
+
+impl<'a> Generator<'a> {
+    pub fn new(init: Initializer<'a>) -> Self {
+        Self { init }
+    }
+
+    pub fn run(
+        &self,
+        batch_size: usize,
+        seed_concurrency: usize,
+        worker_concurrency: usize,
+        benchmark: bool,
+        cb: Option<Box<dyn Callback + Send>>,
+        benchmark_cb: Option<Box<dyn BenchmarkCallback + Send>>,
+    ) {
+        let benchmark_cb = Arc::new(Mutex::new(benchmark_cb));
+        unsafe {
+            let mut runner =
+                self.init
+                    .prepare(batch_size, seed_concurrency, worker_concurrency, cb);
+
+            let start = std::time::Instant::now();
+            let mut total = 0;
+
+            let mut last_benchmark_report = std::time::Instant::now();
+
+            loop {
+                let batch_start = std::time::Instant::now();
+
+                let (processed, stop) = runner.step();
+                total += processed;
+
+                if benchmark
+                    && !stop
+                    && total > 0
+                    && last_benchmark_report.elapsed() >= std::time::Duration::from_secs(1)
+                {
+                    last_benchmark_report = std::time::Instant::now();
+                    let now = std::time::Instant::now();
+                    let total_elapsed: std::time::Duration = now.duration_since(start);
+                    let batch_elapsed: std::time::Duration = now.duration_since(batch_start);
+
+                    let performance = total as f64 / total_elapsed.as_secs_f64();
+                    let batch_performance =
+                        runner.batch_size() as f64 / batch_elapsed.as_secs_f64();
+
+                    match *benchmark_cb.lock().unwrap() {
+                        Some(ref mut cb) => {
+                            cb.result(
+                                total_elapsed,
+                                total,
+                                performance as usize,
+                                batch_performance as usize,
+                            );
+                        }
+                        _ => {}
+                    }
+                }
+
+                if stop {
+                    break;
+                }
+            }
+        }
+    }
+}
+
+pub struct Optimizer<'a> {
+    init: Initializer<'a>,
+}
+
+impl<'a> Optimizer<'a> {
+    pub fn new(init: Initializer<'a>) -> Self {
+        Self { init }
+    }
+
+    pub fn run(
+        &self,
+        preferred_multiple: usize,
+        from_batch_size: usize,
+        to_batch_size: usize,
+        iterations: usize,
+        batch_time: usize,
+        all: bool,
+        ordered: bool,
+        seed_concurrency: usize,
+        worker_concurrency: usize,
+        preheat_time: usize,
+        time: usize,
+        result_cb: Option<Box<dyn OptimizeCallback + Send>>,
+        update_cb: Option<Box<dyn OptimizeCallback + Send>>,
+    ) -> (usize, usize) {
+        let mut current_batch_size = from_batch_size;
+
+        let mut best_batch_size = 0;
+        let mut best_performance = 0 as f64;
+
+        let result_cb = Arc::new(Mutex::new(result_cb));
+        let update_cb = Arc::new(Mutex::new(update_cb));
+
+        let mut iteration = 0;
+        let start = std::time::Instant::now();
+        unsafe {
+            loop {
+                if iterations > 0 {
+                    if iteration < iterations {
+                        iteration += 1;
+                    } else {
+                        println!("Reached max iterations: {}", iterations);
+                        break;
+                    }
+                }
+
+                if time > 0 {
+                    let elapsed = start.elapsed();
+                    if elapsed.as_millis() >= time as u128 {
+                        println!("Reached max time: {}ms", time);
+                        break;
+                    }
+                }
+
+                if !ordered {
+                    let rnd = rand::random::<usize>();
+                    let val = match to_batch_size - from_batch_size {
+                        0 => 0,
+                        x => rnd % x,
+                    };
+
+                    current_batch_size =
+                        align_to_preferred_multiple(val + from_batch_size, preferred_multiple);
+                }
+
+                let mut runner = self.init.prepare(
+                    current_batch_size,
+                    seed_concurrency,
+                    worker_concurrency,
+                    None,
+                );
+
+                let mut total = 0;
+
+                let preheat_start = std::time::Instant::now();
+                {
+                    let mut preheat_processed = 0;
+
+                    loop {
+                        let (processed, _) = runner.step();
+
+                        preheat_processed += processed;
+                        if preheat_processed > runner.batch_size() * 2 {
+                            let preheat_diff = preheat_start.elapsed();
+                            if preheat_diff.as_millis() >= preheat_time as u128 {
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                let start = std::time::Instant::now();
+
+                loop {
+                    let (processed, _) = runner.step();
+                    total += processed;
+
+                    let elapsed = start.elapsed();
+                    if elapsed.is_zero() {
+                        continue;
+                    }
+
+                    let performance = total as f64 / elapsed.as_secs_f64();
+
+                    if performance as usize > 0
+                        && total as f64 >= performance
+                        && (batch_time == 0 || elapsed.as_millis() >= batch_time as u128)
+                    {
+                        if performance > best_performance {
+                            best_batch_size = current_batch_size;
+                            best_performance = performance;
+
+                            match *result_cb.lock().unwrap() {
+                                Some(ref mut cb) => {
+                                    cb.result(best_batch_size, best_performance as usize)
+                                }
+                                _ => {}
+                            }
+                        } else {
+                            if all {
+                                println!(
+                                    "Batch size: {}, performance: {}",
+                                    current_batch_size, performance as usize
+                                );
+                            }
+                        }
+
+                        match *update_cb.lock().unwrap() {
+                            Some(ref mut cb) => cb.result(current_batch_size, performance as usize),
+                            _ => {}
+                        }
+
+                        break;
+                    }
+                }
+
+                if ordered {
+                    current_batch_size += preferred_multiple;
+                    if current_batch_size > to_batch_size {
+                        break;
+                    }
+                }
+            }
+        }
+        (best_batch_size, best_performance as usize)
+    }
+}
+
 pub struct Context {
     device: opencl3::device::Device,
     context: opencl3::context::Context,
@@ -345,6 +563,20 @@ impl Runner {
 
 pub trait Callback {
     fn found(&mut self, key: &[u8]) -> bool;
+}
+
+pub trait BenchmarkCallback {
+    fn result(
+        &mut self,
+        total_elapsed: std::time::Duration,
+        total: usize,
+        performance: usize,
+        batch_performance: usize,
+    );
+}
+
+pub trait OptimizeCallback {
+    fn result(&mut self, batch_size: usize, performance: usize);
 }
 
 impl<'a> Initializer<'a> {

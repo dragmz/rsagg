@@ -1,7 +1,8 @@
 use agvg;
 
 use agvg::bacon::{
-    Callback, Context, align_to_preferred_multiple, max_batch_size, prepare_prefixes,
+    BenchmarkCallback, Callback, Context, OptimizeCallback, Optimizer, align_to_preferred_multiple,
+    max_batch_size, prepare_prefixes,
 };
 
 use algonaut_crypto;
@@ -111,6 +112,62 @@ fn read_prefixes_from_file(file: &str, prefixes: &mut Vec<String>) {
         for line in reader.lines() {
             prefixes.push(line.unwrap().to_string());
         }
+    }
+}
+
+struct OptimizeUpdateCallback {
+    writer: Option<csv::Writer<std::fs::File>>,
+}
+
+impl OptimizeCallback for OptimizeUpdateCallback {
+    fn result(&mut self, batch_size: usize, performance: usize) {
+        match self.writer {
+            Some(ref mut f) => {
+                f.write_record(&[batch_size.to_string(), (performance as usize).to_string()])
+                    .unwrap();
+                f.flush().unwrap();
+            }
+            _ => {}
+        }
+    }
+}
+
+struct OptimizeResultCallback {
+    path: String,
+}
+
+impl OptimizeCallback for OptimizeResultCallback {
+    fn result(&mut self, batch_size: usize, performance: usize) {
+        println!(
+            "Best batch size: {}, performance: {}",
+            batch_size, performance
+        );
+
+        let config = Config { batch: batch_size };
+
+        let config_str = serde_json::to_string(&config).unwrap();
+        std::fs::write(self.path.clone(), config_str).unwrap();
+    }
+}
+
+struct PrintBenchmarkCallback {}
+
+impl BenchmarkCallback for PrintBenchmarkCallback {
+    fn result(
+        &mut self,
+        total_elapsed: std::time::Duration,
+        total: usize,
+        performance: usize,
+        batch_performance: usize,
+    ) {
+        println!(
+            "Elapsed: {}.{:03}s, total: {}, avg/s: {}, last/s: {}",
+            total_elapsed.as_secs(),
+            total_elapsed.subsec_millis(),
+            total,
+            performance as usize,
+            batch_performance as usize,
+        );
     }
 }
 
@@ -252,7 +309,11 @@ fn generate(args: GenerateCommand) {
     let mut batch = args.batch;
 
     let config_path = match args.config.as_str() {
-        "" => "bacon.json".to_string(),
+        "" => match batch {
+            0 => "bacon.json",
+            _ => "",
+        }
+        .to_string(),
         path => path.to_string(),
     };
 
@@ -292,54 +353,22 @@ fn generate(args: GenerateCommand) {
         msig,
     });
 
+    let benchmark_cb = match args.benchmark {
+        true => Some(Box::new(PrintBenchmarkCallback {}) as Box<dyn BenchmarkCallback + Send>),
+        false => None,
+    };
+
     let init = ctx.prepare(&prefixes);
-    unsafe {
-        let mut runner = init.prepare(
-            batch,
-            args.seed_concurrency,
-            args.worker_concurrency,
-            Some(cb),
-        );
 
-        let start = std::time::Instant::now();
-        let mut total = 0;
-
-        let mut last_benchmark_report = std::time::Instant::now();
-
-        loop {
-            let batch_start = std::time::Instant::now();
-
-            let (processed, stop) = runner.step();
-            total += processed;
-
-            if args.benchmark
-                && !stop
-                && total > 0
-                && last_benchmark_report.elapsed() >= std::time::Duration::from_secs(1)
-            {
-                last_benchmark_report = std::time::Instant::now();
-                let now = std::time::Instant::now();
-                let total_elapsed: std::time::Duration = now.duration_since(start);
-                let batch_elapsed: std::time::Duration = now.duration_since(batch_start);
-
-                let performance = total as f64 / total_elapsed.as_secs_f64();
-                let batch_performance = runner.batch_size() as f64 / batch_elapsed.as_secs_f64();
-
-                println!(
-                    "Elapsed: {}.{:03}s, total: {}, avg/s: {}, last/s: {}",
-                    total_elapsed.as_secs(),
-                    total_elapsed.subsec_millis(),
-                    total,
-                    performance as usize,
-                    batch_performance as usize,
-                );
-            }
-
-            if stop {
-                break;
-            }
-        }
-    }
+    let generator = agvg::bacon::Generator::new(init);
+    generator.run(
+        batch,
+        args.seed_concurrency,
+        args.worker_concurrency,
+        args.benchmark,
+        Some(cb),
+        benchmark_cb,
+    );
 }
 
 fn optimize(args: OptimizeCommand) {
@@ -375,25 +404,18 @@ fn optimize(args: OptimizeCommand) {
         prefixes.push("AAAAAAAAAA".to_string());
     }
 
-    let preferred_multiple = ctx.preferred_multiple();
-
-    let from_batch_size = align_to_preferred_multiple(args.min, preferred_multiple);
-    let to_batch_size = match args.max {
-        0 => max_batch_size(&ctx.device(), preferred_multiple),
-        _ => align_to_preferred_multiple(args.max, preferred_multiple),
-    };
-
-    let mut current_batch_size = from_batch_size;
-
-    let mut best_batch_size = 0;
-    let mut best_performance = 0 as f64;
-
-    let mut f = match args.output.as_str() {
+    let update_cb = match args.output.as_str() {
         "" => None,
-        output_path => Some(csv::WriterBuilder::new().from_path(output_path).unwrap()),
-    };
+        output_path => {
+            let cb: Box<dyn OptimizeCallback + Send> = Box::new({
+                let f = Some(csv::WriterBuilder::new().from_path(output_path).unwrap());
 
-    let init = ctx.prepare(&prefixes);
+                OptimizeUpdateCallback { writer: f }
+            });
+
+            Some(cb)
+        }
+    };
 
     let config_path = match args.config.as_str() {
         "" => "bacon.json".to_string(),
@@ -402,131 +424,42 @@ fn optimize(args: OptimizeCommand) {
 
     println!("Config path: {}", config_path);
 
-    let mut iteration = 0;
-    let start = std::time::Instant::now();
-    unsafe {
-        loop {
-            if args.iterations > 0 {
-                if iteration < args.iterations {
-                    iteration += 1;
-                } else {
-                    println!("Reached max iterations: {}", args.iterations);
-                    break;
-                }
-            }
+    let result_cb = match config_path.as_str() {
+        "" => None,
+        path => {
+            let cb: Box<dyn OptimizeCallback + Send> = Box::new(OptimizeResultCallback {
+                path: path.to_string(),
+            });
 
-            if args.time > 0 {
-                let elapsed = start.elapsed();
-                if elapsed.as_millis() >= args.time as u128 {
-                    println!("Reached max time: {}ms", args.time);
-                    break;
-                }
-            }
-
-            if !args.ordered {
-                let rnd = rand::random::<usize>();
-                let val = match to_batch_size - from_batch_size {
-                    0 => 0,
-                    x => rnd % x,
-                };
-
-                current_batch_size =
-                    align_to_preferred_multiple(val + from_batch_size, preferred_multiple);
-            }
-
-            let mut runner = init.prepare(
-                current_batch_size,
-                args.seed_concurrency,
-                args.worker_concurrency,
-                None,
-            );
-
-            let mut total = 0;
-
-            let preheat_start = std::time::Instant::now();
-            {
-                let mut preheat_processed = 0;
-
-                loop {
-                    let (processed, _) = runner.step();
-
-                    preheat_processed += processed;
-                    if preheat_processed > runner.batch_size() * 2 {
-                        let preheat_time = preheat_start.elapsed();
-                        if preheat_time.as_millis() >= args.preheat_time as u128 {
-                            break;
-                        }
-                    }
-                }
-            }
-
-            let start = std::time::Instant::now();
-
-            loop {
-                let (processed, _) = runner.step();
-                total += processed;
-
-                let elapsed = start.elapsed();
-                if elapsed.is_zero() {
-                    continue;
-                }
-
-                let performance = total as f64 / elapsed.as_secs_f64();
-
-                if performance as usize > 0
-                    && total as f64 >= performance
-                    && (args.batch_time == 0 || elapsed.as_millis() >= args.batch_time as u128)
-                {
-                    if performance > best_performance {
-                        best_batch_size = current_batch_size;
-                        best_performance = performance;
-
-                        println!(
-                            "Best batch size: {}, performance: {}",
-                            best_batch_size, best_performance as usize
-                        );
-
-                        if !config_path.is_empty() {
-                            let config = Config {
-                                batch: best_batch_size,
-                            };
-
-                            let config_str = serde_json::to_string(&config).unwrap();
-                            std::fs::write(config_path.clone(), config_str).unwrap();
-                        }
-                    } else {
-                        if args.all {
-                            println!(
-                                "Batch size: {}, performance: {}",
-                                current_batch_size, performance as usize
-                            );
-                        }
-                    }
-
-                    match f {
-                        Some(ref mut f) => {
-                            f.write_record(&[
-                                current_batch_size.to_string(),
-                                (performance as usize).to_string(),
-                            ])
-                            .unwrap();
-                            f.flush().unwrap();
-                        }
-                        _ => {}
-                    }
-
-                    break;
-                }
-            }
-
-            if args.ordered {
-                current_batch_size += preferred_multiple;
-                if current_batch_size > to_batch_size {
-                    break;
-                }
-            }
+            Some(cb)
         }
-    }
+    };
+
+    let preferred_multiple = ctx.preferred_multiple();
+    let from_batch_size = align_to_preferred_multiple(args.min, preferred_multiple);
+    let to_batch_size = match args.max {
+        0 => max_batch_size(&ctx.device(), preferred_multiple),
+        _ => align_to_preferred_multiple(args.max, preferred_multiple),
+    };
+
+    let init = ctx.prepare(&prefixes);
+    let optimizer = Optimizer::new(init);
+
+    let (best_batch_size, best_performance) = optimizer.run(
+        preferred_multiple,
+        from_batch_size,
+        to_batch_size,
+        args.iterations,
+        args.batch_time,
+        args.all,
+        args.ordered,
+        args.seed_concurrency,
+        args.worker_concurrency,
+        args.preheat_time,
+        args.time,
+        result_cb,
+        update_cb,
+    );
 
     println!(
         "Done. Best batch size: {}, performance: {}",
