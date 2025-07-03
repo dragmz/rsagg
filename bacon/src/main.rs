@@ -333,9 +333,6 @@ fn generate(args: GenerateCommand) {
         }
     }
 
-    let kernel = load_kernel(&args.kernel);
-    let ctx = Context::new(args.cpu, msig, args.device, kernel);
-
     let mut prefixes = vec![args.prefixes];
     read_prefixes_from_file(&args.file, &mut prefixes);
 
@@ -358,8 +355,9 @@ fn generate(args: GenerateCommand) {
         false => None,
     };
 
+    let kernel = load_kernel(&args.kernel);
+    let ctx = Context::new(args.cpu, msig, args.device, kernel);
     let init = ctx.prepare(&prefixes);
-
     let generator = agvg::bacon::Generator::new(init);
     generator.run(
         batch,
@@ -384,21 +382,10 @@ fn optimize(args: OptimizeCommand) {
         None
     };
 
-    let kernel = load_kernel(&args.kernel);
-    let ctx = Context::new(args.cpu, msig, args.device, kernel);
-
     let mut prefixes = vec![args.prefixes];
     read_prefixes_from_file(&args.file, &mut prefixes);
 
     prefixes = prepare_prefixes(&prefixes);
-
-    if args.file != "" {
-        let file = std::fs::File::open(args.file).unwrap();
-        let reader = std::io::BufReader::new(file);
-        for line in reader.lines() {
-            prefixes.push(line.unwrap().trim().to_string());
-        }
-    }
 
     if prefixes.len() == 0 {
         prefixes.push("AAAAAAAAAA".to_string());
@@ -434,6 +421,9 @@ fn optimize(args: OptimizeCommand) {
             Some(cb)
         }
     };
+
+    let kernel = load_kernel(&args.kernel);
+    let ctx = Context::new(args.cpu, msig, args.device, kernel);
 
     let preferred_multiple = ctx.preferred_multiple();
     let from_batch_size = align_to_preferred_multiple(args.min, preferred_multiple);
