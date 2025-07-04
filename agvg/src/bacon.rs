@@ -266,12 +266,19 @@ fn default_device(index: usize) -> opencl3::device::Device {
 pub const DEFAULT_KERNEL: &str = include_str!("../../kernel.cl");
 
 fn run_preheat(runner: &mut Runner, preheat_time: usize) {
-    if preheat_time == 0 {
-        let duration = std::time::Duration::from_millis(preheat_time as u64);
+    let run_for = std::time::Duration::from_millis(preheat_time as u64);
+    let mut preheat_processed = 0;
 
-        let start = std::time::Instant::now();
-        while start.elapsed() < duration {
-            let _ = unsafe { runner.step() };
+    let preheat_start = std::time::Instant::now();
+    loop {
+        let (processed, _) = unsafe { runner.step() };
+
+        preheat_processed += processed;
+        if preheat_processed > runner.batch_size() * 2 {
+            let so_far = preheat_start.elapsed();
+            if so_far >= run_for {
+                break;
+            }
         }
     }
 }

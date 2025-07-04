@@ -1,1 +1,4 @@
-workspace = { members = ["agvg", "bacon"], resolver = "3" }
+workspace = { members = ["agvg", "bacon", "rac"], resolver = "3" }
+
+[profile.release]
+lto = true
