@@ -1,8 +1,8 @@
 use agvg;
 
 use agvg::bacon::{
-    BenchmarkCallback, Callback, Context, OptimizeCallback, Optimizer, align_to_preferred_multiple,
-    max_batch_size, prepare_prefixes,
+    BenchmarkCallback, Callback, Context, DEFAULT_KERNEL, OptimizeCallback, Optimizer,
+    align_to_preferred_multiple, max_batch_size, prepare_prefixes,
 };
 
 use algonaut_crypto;
@@ -42,8 +42,6 @@ struct OptimizeCommand {
     /// use CPU-assist mode
     #[arg(long, default_value_t = false)]
     cpu: bool,
-    #[arg(long, default_value_t = false)]
-    all: bool,
     #[arg(long, default_value_t = 0)]
     preheat_time: usize,
     #[arg(long, default_value_t = 0)]
@@ -258,8 +256,6 @@ fn config_exists(config: &str) -> bool {
     std::fs::metadata(config).is_ok()
 }
 
-const DEFAULT_KERNEL: &str = include_str!("../../kernel.cl");
-
 fn load_kernel(kernel: &str) -> String {
     if kernel == "" {
         return DEFAULT_KERNEL.to_string();
@@ -359,6 +355,7 @@ fn generate(args: GenerateCommand) {
     let ctx = Context::new(args.cpu, msig, args.device, kernel);
     let init = ctx.prepare(&prefixes);
     let generator = agvg::bacon::Generator::new(init);
+
     generator.run(
         batch,
         args.seed_concurrency,
@@ -441,7 +438,6 @@ fn optimize(args: OptimizeCommand) {
         to_batch_size,
         args.iterations,
         args.batch_time,
-        args.all,
         args.ordered,
         args.seed_concurrency,
         args.worker_concurrency,
@@ -478,7 +474,6 @@ mod tests {
             seed_concurrency: 0,
             worker_concurrency: 0,
             cpu: false,
-            all: false,
             preheat_time: 0,
             batch_time: 0,
             msig: String::from(""),

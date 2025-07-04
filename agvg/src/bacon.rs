@@ -118,7 +118,6 @@ impl<'a> Optimizer<'a> {
         to_batch_size: usize,
         iterations: usize,
         batch_time: usize,
-        all: bool,
         ordered: bool,
         seed_concurrency: usize,
         worker_concurrency: usize,
@@ -174,25 +173,9 @@ impl<'a> Optimizer<'a> {
                     None,
                 );
 
+                run_preheat(&mut runner, preheat_time);
+
                 let mut total = 0;
-
-                let preheat_start = std::time::Instant::now();
-                {
-                    let mut preheat_processed = 0;
-
-                    loop {
-                        let (processed, _) = runner.step();
-
-                        preheat_processed += processed;
-                        if preheat_processed > runner.batch_size() * 2 {
-                            let preheat_diff = preheat_start.elapsed();
-                            if preheat_diff.as_millis() >= preheat_time as u128 {
-                                break;
-                            }
-                        }
-                    }
-                }
-
                 let start = std::time::Instant::now();
 
                 loop {
@@ -221,12 +204,10 @@ impl<'a> Optimizer<'a> {
                                 _ => {}
                             }
                         } else {
-                            if all {
-                                println!(
-                                    "Batch size: {}, performance: {}",
-                                    current_batch_size, performance as usize
-                                );
-                            }
+                            println!(
+                                "Batch size: {}, performance: {}",
+                                current_batch_size, performance as usize
+                            );
                         }
 
                         match *update_cb.lock().unwrap() {
@@ -280,6 +261,19 @@ fn default_device(index: usize) -> opencl3::device::Device {
     }
 
     opencl3::device::Device::new(devices[index])
+}
+
+pub const DEFAULT_KERNEL: &str = include_str!("../../kernel.cl");
+
+fn run_preheat(runner: &mut Runner, preheat_time: usize) {
+    if preheat_time == 0 {
+        let duration = std::time::Duration::from_millis(preheat_time as u64);
+
+        let start = std::time::Instant::now();
+        while start.elapsed() < duration {
+            let _ = unsafe { runner.step() };
+        }
+    }
 }
 
 pub fn preferred_multiple(device: &Device, kernel: &Kernel) -> usize {
