@@ -51,7 +51,7 @@ impl Callback for RacGenerateCallback {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn rac_generate(
+pub extern "C" fn rac_session_new(
     c_rac: *mut Rac,
     c_prefix: *const c_char,
     batch_size: usize,
@@ -146,7 +146,7 @@ pub extern "C" fn rac_optimize(c_rac: *mut Rac, c_prefix: *const c_char, time: u
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn rac_free_key(c_str: *mut c_char) {
+pub extern "C" fn rac_session_result_free(c_str: *mut c_char) {
     if c_str.is_null() {
         return;
     }
