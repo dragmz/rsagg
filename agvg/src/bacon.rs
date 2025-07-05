@@ -41,7 +41,7 @@ impl<'a> Generator<'a> {
         Self { init }
     }
 
-    pub fn run(
+    pub fn start(
         &self,
         batch_size: usize,
         seed_concurrency: usize,
@@ -49,56 +49,68 @@ impl<'a> Generator<'a> {
         benchmark: bool,
         cb: Option<Box<dyn Callback + Send>>,
         benchmark_cb: Option<Box<dyn BenchmarkCallback + Send>>,
-    ) {
+    ) -> Session {
         let benchmark_cb = Arc::new(Mutex::new(benchmark_cb));
         unsafe {
-            let mut runner =
-                self.init
-                    .prepare(batch_size, seed_concurrency, worker_concurrency, cb);
+            let runner = self
+                .init
+                .prepare(batch_size, seed_concurrency, worker_concurrency, cb);
 
-            let start = std::time::Instant::now();
-            let mut total = 0;
-
-            let mut last_benchmark_report = std::time::Instant::now();
-
-            loop {
-                let batch_start = std::time::Instant::now();
-
-                let (processed, stop) = runner.step();
-                total += processed;
-
-                if benchmark
-                    && !stop
-                    && total > 0
-                    && last_benchmark_report.elapsed() >= std::time::Duration::from_secs(1)
-                {
-                    last_benchmark_report = std::time::Instant::now();
-                    let now = std::time::Instant::now();
-                    let total_elapsed: std::time::Duration = now.duration_since(start);
-                    let batch_elapsed: std::time::Duration = now.duration_since(batch_start);
-
-                    let performance = total as f64 / total_elapsed.as_secs_f64();
-                    let batch_performance =
-                        runner.batch_size() as f64 / batch_elapsed.as_secs_f64();
-
-                    match *benchmark_cb.lock().unwrap() {
-                        Some(ref mut cb) => {
-                            cb.result(
-                                total_elapsed,
-                                total,
-                                performance as usize,
-                                batch_performance as usize,
-                            );
-                        }
-                        _ => {}
-                    }
-                }
-
-                if stop {
-                    break;
-                }
+            Session {
+                runner,
+                benchmark,
+                benchmark_cb,
+                start_time: std::time::Instant::now(),
+                total: 0,
+                last_benchmark_report: std::time::Instant::now(),
             }
         }
+    }
+}
+
+pub struct Session {
+    runner: Runner,
+    benchmark: bool,
+    benchmark_cb: Arc<Mutex<Option<Box<dyn BenchmarkCallback + Send>>>>,
+    start_time: std::time::Instant,
+    total: usize,
+    last_benchmark_report: std::time::Instant,
+}
+
+impl Session {
+    pub fn step(&mut self) -> bool {
+        let batch_start = std::time::Instant::now();
+
+        let (processed, stop) = unsafe { self.runner.step() };
+        self.total += processed;
+
+        if self.benchmark
+            && !stop
+            && self.total > 0
+            && self.last_benchmark_report.elapsed() >= std::time::Duration::from_secs(1)
+        {
+            self.last_benchmark_report = std::time::Instant::now();
+            let now = std::time::Instant::now();
+            let total_elapsed: std::time::Duration = now.duration_since(self.start_time);
+            let batch_elapsed: std::time::Duration = now.duration_since(batch_start);
+
+            let performance = self.total as f64 / total_elapsed.as_secs_f64();
+            let batch_performance = self.runner.batch_size() as f64 / batch_elapsed.as_secs_f64();
+
+            match *self.benchmark_cb.lock().unwrap() {
+                Some(ref mut cb) => {
+                    cb.result(
+                        total_elapsed,
+                        self.total,
+                        performance as usize,
+                        batch_performance as usize,
+                    );
+                }
+                _ => {}
+            }
+        }
+
+        stop
     }
 }
 

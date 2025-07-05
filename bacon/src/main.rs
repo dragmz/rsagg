@@ -355,8 +355,7 @@ fn generate(args: GenerateCommand) {
     let ctx = Context::new(args.cpu, msig, args.device, kernel);
     let init = ctx.prepare(&prefixes);
     let generator = agvg::bacon::Generator::new(init);
-
-    generator.run(
+    let mut session = generator.start(
         batch,
         args.seed_concurrency,
         args.worker_concurrency,
@@ -364,6 +363,12 @@ fn generate(args: GenerateCommand) {
         Some(cb),
         benchmark_cb,
     );
+
+    loop {
+        if session.step() {
+            break;
+        }
+    }
 }
 
 fn optimize(args: OptimizeCommand) {
