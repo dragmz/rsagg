@@ -87,7 +87,7 @@ pub extern "C" fn rac_session_result(c_session: *mut RacSession) -> *mut c_char 
         let session = unsafe { &mut *c_session };
 
         if session.session.step() {
-            if let Some(key) = &*session.found_key.lock().unwrap() {
+            if let Some(key) = session.found_key.lock().unwrap().take() {
                 let c_string = unsafe { std::ffi::CString::from_vec_unchecked(key.clone()) };
                 return c_string.into_raw();
             }
@@ -158,6 +158,22 @@ pub extern "C" fn rac_session_result_free(c_str: *mut c_char) {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     #[test]
-    fn it_works() {}
+    fn it_works() {
+        let rac = rac_new();
+        let prefix = std::ffi::CString::new("A").unwrap();
+
+        let session = rac_session_new(rac, prefix.as_ptr(), 32);
+        loop {
+            let result = rac_session_result(session);
+            if !result.is_null() {
+                rac_session_result_free(result);
+                break;
+            }
+        }
+        rac_session_free(session);
+
+        rac_free(rac);
+    }
 }
