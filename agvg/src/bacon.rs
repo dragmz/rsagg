@@ -332,6 +332,10 @@ const BASE32_ALPHABET: &[u8; 32] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
 
 impl Context {
     pub fn new(cpu: bool, msig: Option<[u8; 32]>, device: usize, kernel: String) -> Self {
+        let device = default_device(device);
+        let context = opencl3::context::Context::from_device(&device).unwrap();
+
+        // Add device-specific flags
         let args = {
             let mut args = Vec::from([CL_STD_3_0]);
             if cpu {
@@ -342,11 +346,15 @@ impl Context {
                 args.push("-D MSIG");
             }
 
+            // Add AMD-specific flags if needed
+            if let Ok(vendor) = device.vendor() {
+                if vendor.to_lowercase().contains("amd") || vendor.to_lowercase().contains("advanced micro devices") {
+                    args.push("-D AMD_DEVICE");
+                }
+            }
+
             args.join(" ")
         };
-
-        let device = default_device(device);
-        let context = opencl3::context::Context::from_device(&device).unwrap();
 
         // Try to compile with OpenCL 3.0 first, then fallback to 2.0 if it fails
         let program = match opencl3::program::Program::create_and_build_from_source(

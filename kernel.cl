@@ -1,3 +1,10 @@
+// OpenCL kernel for ed25519 key generation
+// Compatible with both NVIDIA and AMD devices
+// 
+// Key compatibility fixes for AMD devices:
+// - Uses OpenCL's guaranteed 64-bit 'ulong' type instead of 'unsigned long'
+// - Proper 64-bit literal suffixes (ULL instead of UL)
+//
 typedef struct
 {
   int X[10];

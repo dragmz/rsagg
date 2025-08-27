@@ -22,6 +22,18 @@ Note down the best performance batch value for use in the generator.
 cargo run --release generate --batch BATCH_SIZE PREFIX
 ```
 
+## Device Compatibility
+
+### AMD Radeon devices
+The OpenCL kernel has been optimized for compatibility with AMD Radeon devices (including RX 5500 series and newer). If you encounter compilation errors:
+
+1. The software will automatically try OpenCL 2.0 if OpenCL 3.0 compilation fails
+2. You can specify a custom kernel file using `--kernel path/to/kernel.cl` if needed
+3. Make sure your AMD drivers are up to date
+
+### NVIDIA devices
+All NVIDIA devices with OpenCL support should work out of the box.
+
 ## Provider-specific instructions
 
 ### vast.ai
