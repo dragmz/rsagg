@@ -7,7 +7,7 @@ use opencl3::{
     event::{Event, wait_for_events},
     kernel::Kernel,
     memory::{Buffer, CL_MEM_HOST_WRITE_ONLY, CL_MEM_READ_ONLY, CL_MEM_WRITE_ONLY, ClMem},
-    program::CL_STD_3_0,
+    program::{CL_STD_3_0, CL_STD_2_0},
     types::{CL_FALSE, CL_TRUE},
 };
 use rand::thread_rng;
@@ -348,12 +348,38 @@ impl Context {
         let device = default_device(device);
         let context = opencl3::context::Context::from_device(&device).unwrap();
 
-        let program = opencl3::program::Program::create_and_build_from_source(
+        // Try to compile with OpenCL 3.0 first, then fallback to 2.0 if it fails
+        let program = match opencl3::program::Program::create_and_build_from_source(
             &context,
             &kernel,
             args.as_str(),
-        )
-        .unwrap();
+        ) {
+            Ok(program) => program,
+            Err(e) => {
+                eprintln!("OpenCL 3.0 compilation failed, trying OpenCL 2.0: {}", e);
+                
+                // Try with OpenCL 2.0
+                let args_2_0 = args.replace(CL_STD_3_0, CL_STD_2_0);
+                match opencl3::program::Program::create_and_build_from_source(
+                    &context,
+                    &kernel,
+                    &args_2_0,
+                ) {
+                    Ok(program) => {
+                        eprintln!("Successfully compiled with OpenCL 2.0");
+                        program
+                    }
+                    Err(e2) => {
+                        eprintln!("OpenCL kernel compilation failed with both 3.0 and 2.0: {}", e2);
+                        eprintln!("Device: {}", device.name().unwrap_or("Unknown".to_string()));
+                        eprintln!("Vendor: {}", device.vendor().unwrap_or("Unknown".to_string()));
+                        eprintln!("Original error: {}", e);
+                        eprintln!("Fallback error: {}", e2);
+                        panic!("Failed to compile OpenCL kernel. This may be due to device compatibility issues.");
+                    }
+                }
+            }
+        };
 
         Self {
             device,
