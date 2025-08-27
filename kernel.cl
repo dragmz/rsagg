@@ -1,3 +1,10 @@
+// OpenCL kernel for ed25519 key generation
+// Compatible with both NVIDIA and AMD devices
+// 
+// Key compatibility fixes for AMD devices:
+// - Uses OpenCL's guaranteed 64-bit 'ulong' type instead of 'unsigned long'
+// - Proper 64-bit literal suffixes (ULL instead of UL)
+//
 typedef struct
 {
   int X[10];
@@ -28,7 +35,7 @@ typedef struct
   int xy2d[10];
 } ge_precomp;
 
-typedef unsigned long uint64_t;
+typedef ulong uint64_t;
 typedef unsigned short uint16_t;
 typedef unsigned char uint8_t;
 
@@ -137,7 +144,7 @@ static const uint64_t K[80] = {
 #define Ch(x, y, z) (z ^ (x & (y ^ z)))
 #define Maj(x, y, z) (((x | y) & z) | (x & y))
 #define S(x, n) ROR64(x, n)
-#define R(x, n) (((x) & 0xFFFFFFFFFFFFFFFFUL) >> ((uint64_t)n))
+#define R(x, n) (((x) & 0xFFFFFFFFFFFFFFFFULL) >> ((uint64_t)n))
 #define Sigma0(x) (S(x, 28) ^ S(x, 34) ^ S(x, 39))
 #define Sigma1(x) (S(x, 14) ^ S(x, 18) ^ S(x, 41))
 #define Gamma0(x) (S(x, 1) ^ S(x, 8) ^ R(x, 7))

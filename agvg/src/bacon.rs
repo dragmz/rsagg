@@ -7,7 +7,7 @@ use opencl3::{
     event::{Event, wait_for_events},
     kernel::Kernel,
     memory::{Buffer, CL_MEM_HOST_WRITE_ONLY, CL_MEM_READ_ONLY, CL_MEM_WRITE_ONLY, ClMem},
-    program::CL_STD_3_0,
+    program::{CL_STD_3_0, CL_STD_2_0},
     types::{CL_FALSE, CL_TRUE},
 };
 use rand::thread_rng;
@@ -332,6 +332,10 @@ const BASE32_ALPHABET: &[u8; 32] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
 
 impl Context {
     pub fn new(cpu: bool, msig: Option<[u8; 32]>, device: usize, kernel: String) -> Self {
+        let device = default_device(device);
+        let context = opencl3::context::Context::from_device(&device).unwrap();
+
+        // Add device-specific flags
         let args = {
             let mut args = Vec::from([CL_STD_3_0]);
             if cpu {
@@ -342,18 +346,48 @@ impl Context {
                 args.push("-D MSIG");
             }
 
+            // Add AMD-specific flags if needed
+            if let Ok(vendor) = device.vendor() {
+                if vendor.to_lowercase().contains("amd") || vendor.to_lowercase().contains("advanced micro devices") {
+                    args.push("-D AMD_DEVICE");
+                }
+            }
+
             args.join(" ")
         };
 
-        let device = default_device(device);
-        let context = opencl3::context::Context::from_device(&device).unwrap();
-
-        let program = opencl3::program::Program::create_and_build_from_source(
+        // Try to compile with OpenCL 3.0 first, then fallback to 2.0 if it fails
+        let program = match opencl3::program::Program::create_and_build_from_source(
             &context,
             &kernel,
             args.as_str(),
-        )
-        .unwrap();
+        ) {
+            Ok(program) => program,
+            Err(e) => {
+                eprintln!("OpenCL 3.0 compilation failed, trying OpenCL 2.0: {}", e);
+                
+                // Try with OpenCL 2.0
+                let args_2_0 = args.replace(CL_STD_3_0, CL_STD_2_0);
+                match opencl3::program::Program::create_and_build_from_source(
+                    &context,
+                    &kernel,
+                    &args_2_0,
+                ) {
+                    Ok(program) => {
+                        eprintln!("Successfully compiled with OpenCL 2.0");
+                        program
+                    }
+                    Err(e2) => {
+                        eprintln!("OpenCL kernel compilation failed with both 3.0 and 2.0: {}", e2);
+                        eprintln!("Device: {}", device.name().unwrap_or("Unknown".to_string()));
+                        eprintln!("Vendor: {}", device.vendor().unwrap_or("Unknown".to_string()));
+                        eprintln!("Original error: {}", e);
+                        eprintln!("Fallback error: {}", e2);
+                        panic!("Failed to compile OpenCL kernel. This may be due to device compatibility issues.");
+                    }
+                }
+            }
+        };
 
         Self {
             device,
