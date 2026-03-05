@@ -1,3 +1,7 @@
+// OpenCL kernel for ed25519 key generation.
+// CL3.0 compatibility notes:
+// - Uses OpenCL's guaranteed 64-bit 'ulong' type.
+// - Uses explicit address-space qualifiers for pointer parameters and constants.
 typedef struct
 {
   int X[10];
@@ -28,7 +32,7 @@ typedef struct
   int xy2d[10];
 } ge_precomp;
 
-typedef unsigned long uint64_t;
+typedef ulong uint64_t;
 typedef unsigned short uint16_t;
 typedef unsigned char uint8_t;
 
@@ -55,10 +59,28 @@ void fe_sq2(int *h, const int *f);
 void fe_mul(int *h, const int *f, const int *g);
 void fe_sub(int *h, const int *f, const int *g);
 
-void memcpy(void *dest, const void *src, int len)
+static void memcpy_private_to_private(private void *dest, private const void *src, int len)
 {
   uint8_t *d = dest;
   const uint8_t *s = src;
+
+  while (len--)
+    *d++ = *s++;
+}
+
+static void memcpy_global_to_private(private void *dest, global const void *src, int len)
+{
+  uint8_t *d = dest;
+  global const uint8_t *s = src;
+
+  while (len--)
+    *d++ = *s++;
+}
+
+static void memcpy_constant_to_private(private void *dest, constant const void *src, int len)
+{
+  uint8_t *d = dest;
+  constant const uint8_t *s = src;
 
   while (len--)
     *d++ = *s++;
@@ -103,7 +125,7 @@ typedef struct
   uint8_t buf[128];
 } sha512_ctx;
 
-static const uint64_t K[80] = {
+static constant uint64_t K[80] = {
     0x428a2f98d728ae22UL, 0x7137449123ef65cdUL, 0xb5c0fbcfec4d3b2fUL,
     0xe9b5dba58189dbbcUL, 0x3956c25bf348b538UL, 0x59f111f1b605d019UL,
     0x923f82a4af194f9bUL, 0xab1c5ed5da6d8118UL, 0xd807aa98a3030242UL,
@@ -137,7 +159,7 @@ static const uint64_t K[80] = {
 #define Ch(x, y, z) (z ^ (x & (y ^ z)))
 #define Maj(x, y, z) (((x | y) & z) | (x & y))
 #define S(x, n) ROR64(x, n)
-#define R(x, n) (((x) & 0xFFFFFFFFFFFFFFFFUL) >> ((uint64_t)n))
+#define R(x, n) (((x) & 0xFFFFFFFFFFFFFFFFULL) >> ((uint64_t)n))
 #define Sigma0(x) (S(x, 28) ^ S(x, 34) ^ S(x, 39))
 #define Sigma1(x) (S(x, 14) ^ S(x, 18) ^ S(x, 41))
 #define Gamma0(x) (S(x, 1) ^ S(x, 8) ^ R(x, 7))
@@ -260,25 +282,25 @@ void sha512256_finalise(sha512_ctx *ctx, unsigned char *Digest)
   }
 }
 
-void crypto_hash_sha512(void const *input, unsigned char *Digest, const int len)
+void crypto_hash_sha512(global const uint8_t *input, private uint8_t *Digest, const int len)
 {
   sha512_ctx context;
 
   sha512_init(&context);
 
-  memcpy(context.buf, input, len);
+  memcpy_global_to_private(context.buf, input, len);
   context.curlen += len;
 
   sha512_finalise(&context, Digest);
 }
 
-void crypto_hash_sha512256(void const *input, unsigned char *Digest, const int len)
+void crypto_hash_sha512256(private const uint8_t *input, private uint8_t *Digest, const int len)
 {
   sha512_ctx context;
 
   sha512256_init(&context);
 
-  memcpy(context.buf, input, len);
+  memcpy_private_to_private(context.buf, input, len);
   context.curlen += len;
 
   sha512256_finalise(&context, Digest);
@@ -362,6 +384,63 @@ void fe_add(int *h, const int *f, const int *g)
 
 // https://lib25519.cr.yp.to/lib25519-20220726/crypto_sign/ed25519/ref10/fe_cmov.c.html
 void fe_cmov(int *f, const int *g, unsigned int b)
+{
+  int f0 = f[0];
+  int f1 = f[1];
+  int f2 = f[2];
+  int f3 = f[3];
+  int f4 = f[4];
+  int f5 = f[5];
+  int f6 = f[6];
+  int f7 = f[7];
+  int f8 = f[8];
+  int f9 = f[9];
+  int g0 = g[0];
+  int g1 = g[1];
+  int g2 = g[2];
+  int g3 = g[3];
+  int g4 = g[4];
+  int g5 = g[5];
+  int g6 = g[6];
+  int g7 = g[7];
+  int g8 = g[8];
+  int g9 = g[9];
+  int x0 = f0 ^ g0;
+  int x1 = f1 ^ g1;
+  int x2 = f2 ^ g2;
+  int x3 = f3 ^ g3;
+  int x4 = f4 ^ g4;
+  int x5 = f5 ^ g5;
+  int x6 = f6 ^ g6;
+  int x7 = f7 ^ g7;
+  int x8 = f8 ^ g8;
+  int x9 = f9 ^ g9;
+
+  b = (unsigned int)(-(int)b);
+  x0 &= b;
+  x1 &= b;
+  x2 &= b;
+  x3 &= b;
+  x4 &= b;
+  x5 &= b;
+  x6 &= b;
+  x7 &= b;
+  x8 &= b;
+  x9 &= b;
+
+  f[0] = f0 ^ x0;
+  f[1] = f1 ^ x1;
+  f[2] = f2 ^ x2;
+  f[3] = f3 ^ x3;
+  f[4] = f4 ^ x4;
+  f[5] = f5 ^ x5;
+  f[6] = f6 ^ x6;
+  f[7] = f7 ^ x7;
+  f[8] = f8 ^ x8;
+  f[9] = f9 ^ x9;
+}
+
+void fe_cmov_constant(int *f, constant const int *g, unsigned int b)
 {
   int f0 = f[0];
   int f1 = f[1];
@@ -1522,7 +1601,7 @@ void fe_tobytes(unsigned char *s, const int *h)
 }
 
 // https://lib25519.cr.yp.to/lib25519-20220726/crypto_sign/ed25519/ref10/base.h.html
-static const ge_precomp base[32][8] = {
+static constant ge_precomp base[32][8] = {
     {
         {
             {25967493, -14356035, 29566456, 3660896, -12694345, 4014787, 27544626, -11754271, -6079156, 2047605},
@@ -2988,6 +3067,13 @@ static void cmov(ge_precomp *t, const ge_precomp *u, unsigned char b)
   fe_cmov(t->xy2d, u->xy2d, b);
 }
 
+static void cmov_constant(ge_precomp *t, constant const ge_precomp *u, unsigned char b)
+{
+  fe_cmov_constant(t->yplusx, u->yplusx, b);
+  fe_cmov_constant(t->yminusx, u->yminusx, b);
+  fe_cmov_constant(t->xy2d, u->xy2d, b);
+}
+
 // https://lib25519.cr.yp.to/lib25519-20220726/crypto_sign/ed25519/ref10/ge_scalarmult_base.c.html
 static void select_(ge_precomp *t, int pos, signed char b)
 {
@@ -3000,14 +3086,14 @@ static void select_(ge_precomp *t, int pos, signed char b)
   fe_1(t->yminusx);
   fe_0(t->xy2d);
 
-  cmov(t, &base[pos][0], equal(babs, 1));
-  cmov(t, &base[pos][1], equal(babs, 2));
-  cmov(t, &base[pos][2], equal(babs, 3));
-  cmov(t, &base[pos][3], equal(babs, 4));
-  cmov(t, &base[pos][4], equal(babs, 5));
-  cmov(t, &base[pos][5], equal(babs, 6));
-  cmov(t, &base[pos][6], equal(babs, 7));
-  cmov(t, &base[pos][7], equal(babs, 8));
+  cmov_constant(t, &base[pos][0], equal(babs, 1));
+  cmov_constant(t, &base[pos][1], equal(babs, 2));
+  cmov_constant(t, &base[pos][2], equal(babs, 3));
+  cmov_constant(t, &base[pos][3], equal(babs, 4));
+  cmov_constant(t, &base[pos][4], equal(babs, 5));
+  cmov_constant(t, &base[pos][5], equal(babs, 6));
+  cmov_constant(t, &base[pos][6], equal(babs, 7));
+  cmov_constant(t, &base[pos][7], equal(babs, 8));
   fe_copy(minust.yplusx, t->yminusx);
   fe_copy(minust.yminusx, t->yplusx);
   fe_neg(minust.xy2d, t->xy2d);
@@ -3068,10 +3154,14 @@ void ge_scalarmult_base(ge_p3 *h, const unsigned char *a)
   }
 }
 
-const char base32_map[33] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
-const char msig_header[14] = "MultisigAddr\x01\x01";
+static constant char base32_map[33] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+static constant char msig_header[14] = "MultisigAddr\x01\x01";
 
+#ifdef CPU
+static void base32_addr(unsigned char *src, global unsigned char* dest)
+#else
 static void base32_addr(unsigned char *src, unsigned char* dest)
+#endif
 {
   int didx = 0;
   const int srclen_bits = 32 * 8;
@@ -3104,7 +3194,7 @@ static void base32_addr(unsigned char *src, unsigned char* dest)
   }
 }
 
-static unsigned char test_base32_addr(const unsigned char* b32, const unsigned char prefix_length, const unsigned char* prefix)
+static unsigned char test_base32_addr(const unsigned char* b32, const unsigned char prefix_length, global const unsigned char* prefix)
 {
     for (int i = 0; i < prefix_length; i++)
     {
@@ -3145,9 +3235,9 @@ void kernel ed25519_create_keypair(
   const int i = get_global_id(0);
 
 #ifdef MSIG
-  memcpy(az, msig_header, 14);
-  memcpy(az + 14, base, 32);
-  memcpy(az + 14 + 32, seed + i * 32, 32);
+  memcpy_constant_to_private(az, msig_header, 14);
+  memcpy_global_to_private(az + 14, base, 32);
+  memcpy_global_to_private(az + 14 + 32, seed + i * 32, 32);
 
   crypto_hash_sha512256(az, pub, 14+32+32);
 
