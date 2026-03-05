@@ -298,7 +298,7 @@ pub fn preferred_multiple(device: &Device, kernel: &Kernel) -> usize {
     kernel.get_work_group_size_multiple(device.id()).unwrap()
 }
 
-pub fn prepare_prefixes(prefixes: &Vec<String>) -> Vec<String> {
+pub fn prepare_prefixes(prefixes: &[String]) -> Vec<String> {
     let mut all_prefixes = Vec::new();
 
     for prefixes_line in prefixes {
@@ -368,7 +368,7 @@ impl Context {
         preferred_multiple(&self.device, &kernel)
     }
 
-    pub fn prepare(&self, prefixes: &Vec<String>) -> Initializer {
+    pub fn prepare(&self, prefixes: &[String]) -> Initializer<'_> {
         let mut prefix_chunks: Vec<u8> = Vec::new();
 
         let mut lengths = Vec::new();
