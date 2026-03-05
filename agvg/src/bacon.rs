@@ -10,8 +10,7 @@ use opencl3::{
     program::CL_STD_3_0,
     types::{CL_FALSE, CL_TRUE},
 };
-use rand::thread_rng;
-use rand_core::RngCore;
+use rand::{Rng, rng};
 use rayon::prelude::*;
 use std::{
     cmp::max,
@@ -168,7 +167,7 @@ impl<'a> Optimizer<'a> {
                 }
 
                 if !ordered {
-                    let rnd = rand::random::<usize>();
+                    let rnd = rand::random::<u64>() as usize;
                     let val = match to_batch_size - from_batch_size {
                         0 => 0,
                         x => rnd % x,
@@ -629,7 +628,7 @@ impl<'a> Initializer<'a> {
                 let barrier = seed_workers_start_barrier.clone();
 
                 let t = std::thread::spawn(move || {
-                    let mut rng = thread_rng();
+                    let mut rng = rng();
 
                     let mut next_seeds = vec![0u8; _batch_size * KEY_SIZE];
                     rng.fill_bytes(&mut next_seeds);
