@@ -86,6 +86,27 @@ static void memcpy_constant_to_private(private void *dest, constant const void *
     *d++ = *s++;
 }
 
+static void memcpy_global_to_private_32(private uint8_t *dest, global const uint8_t *src)
+{
+  #pragma unroll
+  for (int i = 0; i < 32; ++i)
+    dest[i] = src[i];
+}
+
+static void memcpy_private_to_private_78(private uint8_t *dest, private const uint8_t *src)
+{
+  #pragma unroll
+  for (int i = 0; i < 78; ++i)
+    dest[i] = src[i];
+}
+
+static void memcpy_constant_to_private_14(private uint8_t *dest, constant const uint8_t *src)
+{
+  #pragma unroll
+  for (int i = 0; i < 14; ++i)
+    dest[i] = src[i];
+}
+
 // https://github.com/dragmz/libtomcrypt/blob/develop/src/hashes/sha2/sha512.c
 // https://github.com/dragmz/libtomcrypt/blob/develop/src/headers/tomcrypt_private.h
 // https://github.com/dragmz/libtomcrypt/blob/develop/src/headers/tomcrypt_macros.h
@@ -288,7 +309,7 @@ void crypto_hash_sha512(global const uint8_t *input, private uint8_t *Digest, co
 
   sha512_init(&context);
 
-  memcpy_global_to_private(context.buf, input, len);
+  memcpy_global_to_private_32(context.buf, input);
   context.curlen += len;
 
   sha512_finalise(&context, Digest);
@@ -300,7 +321,7 @@ void crypto_hash_sha512256(private const uint8_t *input, private uint8_t *Digest
 
   sha512256_init(&context);
 
-  memcpy_private_to_private(context.buf, input, len);
+  memcpy_private_to_private_78(context.buf, input);
   context.curlen += len;
 
   sha512256_finalise(&context, Digest);
@@ -3154,8 +3175,8 @@ void ge_scalarmult_base(ge_p3 *h, const unsigned char *a)
   }
 }
 
-static constant char base32_map[33] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
-static constant char msig_header[14] = "MultisigAddr\x01\x01";
+static constant uint8_t base32_map[33] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+static constant uint8_t msig_header[14] = "MultisigAddr\x01\x01";
 
 #ifdef CPU
 static void base32_addr(unsigned char *src, global unsigned char* dest)
@@ -3166,7 +3187,6 @@ static void base32_addr(unsigned char *src, unsigned char* dest)
   int didx = 0;
   const int srclen_bits = 32 * 8;
 
-  #pragma unroll(1)
   for (int i = 0; i < srclen_bits; i += 5)
   {
     int sym;
@@ -3235,9 +3255,9 @@ void kernel ed25519_create_keypair(
   const int i = get_global_id(0);
 
 #ifdef MSIG
-  memcpy_constant_to_private(az, msig_header, 14);
-  memcpy_global_to_private(az + 14, base, 32);
-  memcpy_global_to_private(az + 14 + 32, seed + i * 32, 32);
+  memcpy_constant_to_private_14(az, msig_header);
+  memcpy_global_to_private_32(az + 14, base);
+  memcpy_global_to_private_32(az + 14 + 32, seed + i * 32);
 
   crypto_hash_sha512256(az, pub, 14+32+32);
 
