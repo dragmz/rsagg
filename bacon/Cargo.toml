@@ -7,9 +7,8 @@ edition = "2024"
 
 [dependencies]
 agvg = { path = "../agvg" }
-algonaut = "0.4.2"
-algonaut_crypto = "0.4.2"
-algonaut_transaction = "0.4.2"
+algokit_crypto = { git = "https://github.com/algorandecosystem/algokit-core.git", rev = "cd8c84edc426463cfb8301293f0c70a452fe7ab4", package = "algokit_crypto" }
+algokit_transact = { git = "https://github.com/algorandecosystem/algokit-core.git", rev = "cd8c84edc426463cfb8301293f0c70a452fe7ab4", package = "algokit_transact" }
 clap = { version = "4.5.60", features = ["derive"] }
 crossbeam-channel = "0.5.15"
 csv = "1.4.0"

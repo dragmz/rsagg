@@ -5,7 +5,8 @@ use agvg::bacon::{
     align_to_preferred_multiple, max_batch_size, prepare_prefixes,
 };
 
-use algonaut_crypto;
+use algokit_crypto::{Keypair, algo25, ed25519::CryptoxideEd25519Keypair};
+use algokit_transact::Address;
 use csv;
 use std::io::{BufRead, Read};
 use std::str::FromStr;
@@ -113,6 +114,45 @@ fn read_prefixes_from_file(file: &str, prefixes: &mut Vec<String>) {
     }
 }
 
+fn address_from_mnemonic(mnemonic: &str) -> Address {
+    let seed = algo25::mnemonic_to_master_derivation_key(mnemonic).unwrap();
+    address_from_seed(seed)
+}
+
+fn address_from_seed(seed: [u8; 32]) -> Address {
+    let keypair = CryptoxideEd25519Keypair::try_generate(Some(seed)).unwrap();
+    Address::new(keypair.verifying_key())
+}
+
+fn output_record_for_key(key: &[u8], msig: Option<[u8; 32]>) -> Vec<String> {
+    if let Some(msig) = msig {
+        let preamble = [b"MultisigAddr\x01\x01", msig.as_slice()].concat();
+        let full_key = [preamble.as_slice(), key].concat();
+
+        let digest = Sha512_256::digest(&full_key);
+
+        let mut target_bytes = [0; 32];
+        target_bytes.copy_from_slice(&digest);
+
+        let mut dummy_bytes = [0; 32];
+        dummy_bytes.copy_from_slice(key);
+
+        let base_addr = Address::new(msig);
+        let dummy_addr = Address::new(dummy_bytes);
+        let target_addr = Address::new(target_bytes);
+
+        vec![
+            target_addr.to_string(),
+            base_addr.to_string(),
+            dummy_addr.to_string(),
+        ]
+    } else {
+        let mnemonic = algo25::secret_key_to_mnemonic(key).unwrap();
+        let addr = address_from_mnemonic(&mnemonic);
+        vec![addr.to_string(), mnemonic]
+    }
+}
+
 struct OptimizeUpdateCallback {
     writer: Option<csv::Writer<std::fs::File>>,
 }
@@ -180,51 +220,15 @@ struct PrintCallback {
 impl Callback for PrintCallback {
     fn found(&mut self, key: &[u8]) -> bool {
         self.found += 1;
+        let record = output_record_for_key(key, self.msig);
 
-        if self.msig.is_some() {
-            let preamble = [b"MultisigAddr\x01\x01", self.msig.unwrap().as_slice()].concat();
-            let full_key = [preamble.as_slice(), key].concat();
+        if self.print {
+            println!("{}", record.join(","));
+        }
 
-            let digest = Sha512_256::digest(&full_key);
-
-            let mut target_bytes = [0; 32];
-            target_bytes.copy_from_slice(&digest);
-
-            let mut dummy_bytes = [0; 32];
-            dummy_bytes.copy_from_slice(&key);
-
-            let base_addr = algonaut::core::Address::new(self.msig.unwrap());
-            let dummy_addr = algonaut::core::Address::new(dummy_bytes);
-            let target_addr = algonaut::core::Address::new(target_bytes);
-
-            if self.print {
-                println!("{},{},{}", target_addr, base_addr, dummy_addr);
-            }
-
-            if let Some(ref mut writer) = self.writer {
-                writer
-                    .write_record(&[
-                        target_addr.to_string(),
-                        base_addr.to_string(),
-                        dummy_addr.to_string(),
-                    ])
-                    .unwrap();
-                writer.flush().unwrap();
-            }
-        } else {
-            let m = algonaut_crypto::mnemonic::from_key(key).unwrap();
-            let acc = algonaut::transaction::account::Account::from_mnemonic(&m).unwrap();
-
-            if self.print {
-                println!("{},{}", acc.address(), m);
-            }
-
-            if let Some(ref mut writer) = self.writer {
-                writer
-                    .write_record(&[acc.address().to_string(), m])
-                    .unwrap();
-                writer.flush().unwrap();
-            }
+        if let Some(ref mut writer) = self.writer {
+            writer.write_record(&record).unwrap();
+            writer.flush().unwrap();
         }
 
         self.found < self.count
@@ -293,11 +297,7 @@ fn generate(args: GenerateCommand) {
     println!("Running generate");
 
     let msig = if !args.msig.is_empty() {
-        Some(
-            algonaut::core::Address::from_str(args.msig.as_str())
-                .unwrap()
-                .0,
-        )
+        Some(*Address::from_str(args.msig.as_str()).unwrap().as_bytes())
     } else {
         None
     };
@@ -375,11 +375,7 @@ fn optimize(args: OptimizeCommand) {
     println!("Running optimize");
 
     let msig = if !args.msig.is_empty() {
-        Some(
-            algonaut::core::Address::from_str(args.msig.as_str())
-                .unwrap()
-                .0,
-        )
+        Some(*Address::from_str(args.msig.as_str()).unwrap().as_bytes())
     } else {
         None
     };
@@ -461,6 +457,65 @@ fn optimize(args: OptimizeCommand) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_standard_output_record_golden() {
+        let key = [1u8; 32];
+        let record = output_record_for_key(&key, None);
+
+        assert_eq!(
+            record,
+            vec![
+                "RKEOHXLUBHYZL7KS3MWTZOS5OLFGOCN7DWKBEG7TOSEADNAPN5OOTUNSLE".to_string(),
+                "cage advice letter avoid acoustic doctor amount absurd cage advice letter avoid acoustic doctor amount absurd cage advice letter avoid acoustic doctor amount abandon pause".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_msig_output_record_golden() {
+        let key = [1u8; 32];
+        let msig = [2u8; 32];
+        let record = output_record_for_key(&key, Some(msig));
+
+        assert_eq!(
+            record,
+            vec![
+                "EWWB6A76WCSISYOOJFRBLC4K5GNEOVJVHMAQKJJELV3PC3JV4TRUVDM3KY".to_string(),
+                "AIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBMXPWWNQ".to_string(),
+                "AEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEA5RCDXMI".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_migration_golden_vector() {
+        let seed = [1u8; 32];
+        let mnemonic = algo25::secret_key_to_mnemonic(&seed).unwrap();
+        let address = address_from_seed(seed);
+
+        assert_eq!(
+            mnemonic,
+            "cage advice letter avoid acoustic doctor amount absurd cage advice letter avoid acoustic doctor amount absurd cage advice letter avoid acoustic doctor amount abandon pause"
+        );
+        assert_eq!(
+            address.to_string(),
+            "RKEOHXLUBHYZL7KS3MWTZOS5OLFGOCN7DWKBEG7TOSEADNAPN5OOTUNSLE"
+        );
+    }
+
+    #[test]
+    fn test_migration_roundtrip_from_mnemonic_and_address_string() {
+        let mnemonic = "cage advice letter avoid acoustic doctor amount absurd cage advice letter avoid acoustic doctor amount absurd cage advice letter avoid acoustic doctor amount abandon pause";
+        let address = address_from_mnemonic(mnemonic);
+        let parsed = Address::from_str(address.to_string().as_str()).unwrap();
+
+        assert_eq!(
+            address.to_string(),
+            "RKEOHXLUBHYZL7KS3MWTZOS5OLFGOCN7DWKBEG7TOSEADNAPN5OOTUNSLE"
+        );
+        assert_eq!(parsed, address);
+    }
 
     #[test]
     fn test_optimize() {
