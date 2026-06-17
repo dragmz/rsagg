@@ -22,6 +22,24 @@ Note down the best performance batch value for use in the generator.
 cargo run --release generate --batch BATCH_SIZE PREFIX
 ```
 
+### Passing extra options to the OpenCL compiler
+
+Arbitrary options can be appended verbatim to the `clBuildProgram` call with the
+`--cl-build-options` flag. `optimize` persists the value into `bacon.json` so
+`generate` reuses it.
+
+```bash
+cargo run --release generate --cl-build-options "-cl-nv-maxrregcount=96" --batch BATCH_SIZE PREFIX
+# tune & persist into bacon.json
+cargo run --release optimize --cl-build-options "-cl-nv-maxrregcount=96" PREFIX
+```
+
+> **Note (NVIDIA):** this kernel is register-heavy and occupancy-bound, so
+> capping registers-per-thread with `-cl-nv-maxrregcount=<N>` can boost
+> throughput a lot (~+30% on a Maxwell GTX 950 at `N=96`). The optimum is
+> hardware-specific with a sharp cliff, so tune per GPU (try 80/88/96/104).
+> NVIDIA-only — do not pass it on other vendors.
+
 ## Provider-specific instructions
 
 ### vast.ai

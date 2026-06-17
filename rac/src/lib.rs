@@ -61,7 +61,7 @@ pub extern "C" fn rac_session_new(
     }
 
     let _rac = unsafe { &*c_rac };
-    let ctx = Context::new(false, None, 0, DEFAULT_KERNEL.to_string());
+    let ctx = Context::new(false, None, 0, DEFAULT_KERNEL.to_string(), "");
 
     let prefix = unsafe { CStr::from_ptr(c_prefix) }.to_str().unwrap();
     let prefixes = vec![prefix.to_string()];
@@ -115,7 +115,7 @@ pub extern "C" fn rac_optimize(c_rac: *mut Rac, c_prefix: *const c_char, time: u
     }
 
     let _rac = unsafe { &*c_rac };
-    let ctx = Context::new(false, None, 0, DEFAULT_KERNEL.to_string());
+    let ctx = Context::new(false, None, 0, DEFAULT_KERNEL.to_string(), "");
 
     let prefix = unsafe { CStr::from_ptr(c_prefix) }.to_str().unwrap();
     let prefixes = vec![prefix.to_string()];

@@ -84,3 +84,57 @@ Make `kernel.cl` compile under strict OpenCL 3.0 across vendor compilers and var
 - AMD compiler toolchain (RGA) for tested ASICs.
 - NVIDIA OpenCL runtime compiler for tested device/platform.
 - all required build variants: default, `CPU`, `MSIG`.
+
+## Performance Optimization Experiments (GTX 950, driver 582.28)
+
+### Methodology
+- Metric: steady-state `last/s` from `generate --benchmark --batch 200064`
+  (per-batch GPU throughput; inter-run variance < 0.1%, so any delta > ~0.5%
+  is real). Median of readings after a 3-sample warm-up.
+- Correctness: `generate --count N <prefix>` and verify each printed address
+  (recomputed independently on the CPU from the seed) starts with the prefix.
+- **Compile-time gotcha:** a fresh compile of this kernel takes **~80 s** on
+  this driver. The NVIDIA ComputeCache makes the unmodified kernel *look*
+  instant, but every source/flag change is a cache miss. Variant tests must be
+  pre-warmed (compile once) before benchmarking, or short timeouts kill the
+  process mid-compile and it looks "broken". `CUDA_CACHE_DISABLE=1` forces a
+  cold compile for verification.
+
+### Findings
+| Change | Throughput | vs baseline |
+| --- | --- | --- |
+| baseline | ~489k addr/s | — |
+| `-cl-nv-maxrregcount=96` (NVIDIA) | ~640k | **+30%** |
+| (measured-only) non-constant-time `select_` direct index | ~498k | +1.7% |
+
+The register cap is the only change kept; `kernel.cl` itself is unmodified.
+
+1. **Register cap → occupancy is the dominant lever.** Ablation showed the
+   kernel is *occupancy-bound*, not ALU-bound: removing a third of the field
+   multiplies actually made it *slower* (register-allocation/occupancy cliff),
+   while removing the inversion (~15% of time) sped it up. Capping
+   registers-per-thread with `-cl-nv-maxrregcount` raised occupancy for ~+30%.
+   The optimum is a sharp peak (GTX 950: `96` best; `88`→+20%, `104`→ slightly
+   *slower* than default) and is **hardware-specific** — it must be tuned per
+   GPU. Supplied through the generic build-options passthrough (the
+   `--cl-build-options` CLI flag, persisted as the `cl_build_options`
+   `bacon.json` field), e.g. `--cl-build-options "-cl-nv-maxrregcount=96"`.
+   NVIDIA-only.
+
+### Tried and rejected
+- `__attribute__((noinline))` on `fe_mul`/`fe_sq`/`fe_sq2`: kernel failed to
+  launch (`CL_OUT_OF_RESOURCES`).
+- `reqd_work_group_size(64|128,1,1)`: host launches with a NULL local size, so
+  the fixed-size requirement made the launch fail.
+
+### Future directions (not done)
+- Non-constant-time `select_` direct table index (measured +1.7%, see above) —
+  a safe portable win, intentionally left out to keep `kernel.cl` byte-identical
+  to the reference ref10. Index `base[pos][idx]` directly (not via a
+  `constant`-qualified pointer local).
+- 5-bit signed window (≈51 instead of 64 point additions, ~15–20% fewer
+  field muls) — needs a regenerated, larger precomputed base table.
+- Source-level register-pressure reduction (esp. `fe_invert` temporaries) to
+  push the occupancy optimum even higher, portably.
+- Auto-sweeping `-cl-nv-maxrregcount` inside `optimize` (each value is a fresh
+  ~80 s compile, so it is currently a manual sweep).

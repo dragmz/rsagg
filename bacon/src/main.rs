@@ -59,6 +59,10 @@ struct OptimizeCommand {
     iterations: usize,
     #[arg(long, default_value_t = 0)]
     time: usize,
+    /// Extra options appended verbatim to the OpenCL compiler (clBuildProgram),
+    /// e.g. "-cl-nv-maxrregcount=96"
+    #[arg(long, allow_hyphen_values = true, default_value_t = String::from(""))]
+    cl_build_options: String,
 }
 
 #[derive(Parser)]
@@ -101,6 +105,11 @@ struct GenerateCommand {
 
     #[arg(long, default_value_t = String::from(""))]
     kernel: String,
+
+    /// Extra options appended verbatim to the OpenCL compiler (clBuildProgram),
+    /// e.g. "-cl-nv-maxrregcount=96"; empty = use config value
+    #[arg(long, allow_hyphen_values = true, default_value_t = String::from(""))]
+    cl_build_options: String,
 }
 
 fn read_prefixes_from_file(file: &str, prefixes: &mut Vec<String>) {
@@ -172,6 +181,7 @@ impl OptimizeCallback for OptimizeUpdateCallback {
 
 struct OptimizeResultCallback {
     path: String,
+    cl_build_options: String,
 }
 
 impl OptimizeCallback for OptimizeResultCallback {
@@ -181,7 +191,10 @@ impl OptimizeCallback for OptimizeResultCallback {
             batch_size, performance
         );
 
-        let config = Config { batch: batch_size };
+        let config = Config {
+            batch: batch_size,
+            cl_build_options: self.cl_build_options.clone(),
+        };
 
         let config_str = serde_json::to_string(&config).unwrap();
         std::fs::write(self.path.clone(), config_str).unwrap();
@@ -254,6 +267,11 @@ fn main() {
 #[derive(serde::Deserialize, serde::Serialize)]
 struct Config {
     batch: usize,
+    /// Extra options appended verbatim to the OpenCL `clBuildProgram` call, e.g.
+    /// "-cl-nv-maxrregcount=96" (NVIDIA occupancy tuning) or
+    /// "-cl-fast-relaxed-math". Empty = none.
+    #[serde(default)]
+    cl_build_options: String,
 }
 
 fn config_exists(config: &str) -> bool {
@@ -303,6 +321,7 @@ fn generate(args: GenerateCommand) {
     };
 
     let mut batch = args.batch;
+    let mut cl_build_options = args.cl_build_options.clone();
 
     let config_path = match args.config.as_str() {
         "" => match batch {
@@ -317,8 +336,15 @@ fn generate(args: GenerateCommand) {
         match load_config(&config_path) {
             Some(config) => {
                 if args.batch == 0 || !args.config.is_empty() {
-                    println!("Loaded config - {}, batch: {}", config_path, config.batch);
+                    println!(
+                        "Loaded config - {}, batch: {}, cl_build_options: '{}'",
+                        config_path, config.batch, config.cl_build_options
+                    );
                     batch = config.batch;
+                    // CLI flag (if set) overrides the persisted value.
+                    if cl_build_options.is_empty() {
+                        cl_build_options = config.cl_build_options;
+                    }
                 }
             }
             None => {
@@ -352,7 +378,7 @@ fn generate(args: GenerateCommand) {
     };
 
     let kernel = load_kernel(&args.kernel);
-    let ctx = Context::new(args.cpu, msig, args.device, kernel);
+    let ctx = Context::new(args.cpu, msig, args.device, kernel, &cl_build_options);
     let init = ctx.prepare(&prefixes);
     let generator = agvg::bacon::Generator::new(init);
     let mut session = generator.start(
@@ -414,6 +440,7 @@ fn optimize(args: OptimizeCommand) {
         path => {
             let cb: Box<dyn OptimizeCallback + Send> = Box::new(OptimizeResultCallback {
                 path: path.to_string(),
+                cl_build_options: args.cl_build_options.clone(),
             });
 
             Some(cb)
@@ -421,7 +448,7 @@ fn optimize(args: OptimizeCommand) {
     };
 
     let kernel = load_kernel(&args.kernel);
-    let ctx = Context::new(args.cpu, msig, args.device, kernel);
+    let ctx = Context::new(args.cpu, msig, args.device, kernel, &args.cl_build_options);
 
     let preferred_multiple = ctx.preferred_multiple();
     let from_batch_size = align_to_preferred_multiple(args.min, preferred_multiple);
@@ -520,7 +547,7 @@ mod tests {
     #[test]
     fn test_optimize() {
         let multiple = {
-            let ctx = Context::new(false, None, 0, DEFAULT_KERNEL.to_string());
+            let ctx = Context::new(false, None, 0, DEFAULT_KERNEL.to_string(), "");
             ctx.preferred_multiple()
         };
 
@@ -542,11 +569,12 @@ mod tests {
             kernel: String::from(""),
             iterations: 0,
             time: 0,
+            cl_build_options: String::from(""),
         });
     }
     #[test]
     fn test_generate() {
-        let ctx = Context::new(false, None, 0, DEFAULT_KERNEL.to_string());
+        let ctx = Context::new(false, None, 0, DEFAULT_KERNEL.to_string(), "");
         let init = ctx.prepare(&vec!["A".to_string()]);
 
         unsafe {

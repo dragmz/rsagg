@@ -330,21 +330,36 @@ pub fn prepare_prefixes(prefixes: &[String]) -> Vec<String> {
 const BASE32_ALPHABET: &[u8; 32] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
 
 impl Context {
-    pub fn new(cpu: bool, msig: Option<[u8; 32]>, device: usize, kernel: String) -> Self {
+    pub fn new(
+        cpu: bool,
+        msig: Option<[u8; 32]>,
+        device: usize,
+        kernel: String,
+        extra_options: &str,
+    ) -> Self {
+        let device = default_device(device);
+
         let args = {
-            let mut args = Vec::from([CL_STD_3_0]);
+            let mut args = Vec::from([CL_STD_3_0.to_string()]);
             if cpu {
-                args.push("-D CPU");
+                args.push("-D CPU".to_string());
             }
 
             if msig.is_some() {
-                args.push("-D MSIG");
+                args.push("-D MSIG".to_string());
+            }
+
+            // General passthrough to clBuildProgram, appended verbatim. This is
+            // how vendor flags such as `-cl-nv-maxrregcount=96` (NVIDIA occupancy
+            // tuning, ~+30% on this register-heavy kernel) are supplied.
+            let extra_options = extra_options.trim();
+            if !extra_options.is_empty() {
+                args.push(extra_options.to_string());
             }
 
             args.join(" ")
         };
 
-        let device = default_device(device);
         let context = opencl3::context::Context::from_device(&device).unwrap();
 
         let program = opencl3::program::Program::create_and_build_from_source(
